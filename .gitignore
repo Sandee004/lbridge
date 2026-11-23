@@ -1,0 +1,17 @@
+.venv
+.env
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+node_modules/
+dist/
+.vscode/
+.expo/
+
+mvp.md
+LedgerBridge_MVP_v2_Eval_Edition.pdf
+LedgerBridge_MVP_v2_Eval_Edition.pdf.txt
+LedgerBridge MVP Architecture Guide.pdf
+LedgerBridge MVP Architecture Guide.pdf.txt
+guide.md

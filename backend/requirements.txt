@@ -1,0 +1,9 @@
+uvicorn
+fastapi
+python-dotenv
+sqlalchemy[asyncio]
+greenlet
+aiosqlite
+argon2-cffi
+pyjwt
+pydantic[email]
