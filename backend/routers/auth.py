@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -11,18 +11,20 @@ router = APIRouter()
 
 
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+async def signup(user_data: UserCreate, response: Response, db: AsyncSession = Depends(get_db)):
     existing_user_query = await db.execute(
-        select(User).where((User.email == user_data.email) | (User.username == user_data.username))
+        select(User).where(User.email == user_data.email)
     )
     if existing_user_query.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this email or username already exists",
+            detail="User with this email already exists",
         )
 
+    company = user_data.company_name or user_data.username or user_data.email.split("@")[0]
     new_user = User(
-        username=user_data.username,
+        username=company,
+        company_name=company,
         email=user_data.email,
         password=hash_password(user_data.password),
     )
@@ -31,11 +33,19 @@ async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(new_user)
 
     token = create_access_token(user_id=str(new_user.id))
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=60 * 60 * 24 * 30,
+        samesite="lax",
+        secure=False,
+    )
     return TokenResponse(access_token=token, user=UserResponse.model_validate(new_user))
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(credentials: UserLogin, response: Response, db: AsyncSession = Depends(get_db)):
     query = await db.execute(select(User).where(User.email == credentials.email))
     user = query.scalars().first()
 
@@ -46,9 +56,24 @@ async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
         )
 
     token = create_access_token(user_id=str(user.id))
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        max_age=60 * 60 * 24 * 30,
+        samesite="lax",
+        secure=False,
+    )
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 
 
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie(key="access_token")
+    return {"message": "Logged out successfully"}
+
+
+@router.get("/me", response_model=UserResponse)
 @router.get("/profile", response_model=UserResponse)
 async def get_profile(current_user: User = Depends(get_current_user)):
     return current_user

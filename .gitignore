@@ -15,3 +15,5 @@ LedgerBridge_MVP_v2_Eval_Edition.pdf.txt
 LedgerBridge MVP Architecture Guide.pdf
 LedgerBridge MVP Architecture Guide.pdf.txt
 guide.md
+*.db
+*.sqlite3

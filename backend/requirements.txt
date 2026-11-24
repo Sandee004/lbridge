@@ -7,3 +7,6 @@ aiosqlite
 argon2-cffi
 pyjwt
 pydantic[email]
+python-multipart
+pypdf
+reportlab

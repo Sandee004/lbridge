@@ -7,6 +7,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # ------------------------------
+# Ollama & Classification Config
+# ------------------------------
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "6"))
+CAPITALIZATION_THRESHOLD = float(os.getenv("CAPITALIZATION_THRESHOLD", "500000.0"))  # ₦500,000 threshold for Assets
+
+# ------------------------------
 # Frontend build configuration
 # ------------------------------
 
