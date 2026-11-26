@@ -1,32 +1,25 @@
 import React, { useState } from 'react';
-import { CheckCircle2, ChevronRight, HelpCircle } from 'lucide-react';
-import type { BackendTransaction, FinancialElement, WorkspacePage } from '../types';
-import { ELEMENT_BADGE } from '../data/mockData';
+import { CheckCircle2, ChevronDown, ChevronRight, HelpCircle } from 'lucide-react';
+import type { BackendTransaction, CategoryItem, WorkspacePage } from '../types';
 
 interface ReviewQueueViewProps {
   pendingTransactions: BackendTransaction[];
   onResolve: (
     tx: BackendTransaction,
-    element: Exclude<FinancialElement, 'Needs Review'>,
+    element: string,
     saveRule: boolean
   ) => void;
   onNavigate: (page: WorkspacePage) => void;
   formatCurrency: (val?: number | null) => string;
+  categories: CategoryItem[];
 }
-
-const VALID_ELEMENTS: Exclude<FinancialElement, 'Needs Review'>[] = [
-  'Assets',
-  'Liabilities',
-  'Income',
-  'Expenses',
-  'Capital',
-];
 
 export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   pendingTransactions,
   onResolve,
   onNavigate,
   formatCurrency,
+  categories,
 }) => {
   const [saveRuleFlags, setSaveRuleFlags] = useState<Record<string, boolean>>({});
 
@@ -68,7 +61,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
       {/* Review Queue Items List */}
       <div className="space-y-3">
         {pendingTransactions.map((tx) => {
-          const shouldSaveRule = saveRuleFlags[tx.id] ?? true;
+          const shouldSaveRule = saveRuleFlags[tx.id] ?? false;
           const candidatePattern =
             tx.description_norm || tx.description_raw.split(/[-–—/]/)[0].trim().slice(0, 30);
 
@@ -77,10 +70,10 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
               key={tx.id}
               className="rounded-xl border border-slate-200 bg-white p-5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-xs"
             >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 {/* Transaction Information */}
-                <div className="space-y-2 flex-1">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-2 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-xs text-slate-500">{tx.date}</span>
                     <span
                       className={`font-mono text-xs font-bold px-2 py-0.5 rounded-md ${
@@ -110,21 +103,29 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                   )}
                 </div>
 
-                {/* 1-Click Classification Buttons */}
-                <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                  {VALID_ELEMENTS.map((elem) => {
-                    const badge = ELEMENT_BADGE[elem];
-                    return (
-                      <button
-                        key={elem}
-                        onClick={() => onResolve(tx, elem, shouldSaveRule)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all hover:scale-102 active:scale-98 ${badge.badge} hover:shadow-xs`}
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-                        <span>{elem}</span>
-                      </button>
-                    );
-                  })}
+                {/* Categorize Action Dropdown */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="relative min-w-[210px]">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          onResolve(tx, e.target.value, shouldSaveRule);
+                        }
+                      }}
+                      className="w-full appearance-none cursor-pointer rounded-lg border border-slate-300 bg-white py-2 pl-3.5 pr-8 text-xs font-semibold text-slate-800 shadow-2xs hover:border-emerald-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
+                    >
+                      <option value="" disabled>
+                        Assign category...
+                      </option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.name}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400" />
+                  </div>
                 </div>
               </div>
 

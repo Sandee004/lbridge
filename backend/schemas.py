@@ -110,6 +110,27 @@ class RuleResponse(BaseModel):
         from_attributes = True
 
 
+class CategoryCreate(BaseModel):
+    name: str
+    direction: str = "any"  # 'any', 'debit', 'credit'
+    color: str = "slate"
+    description: Optional[str] = None
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    direction: str
+    color: str
+    description: Optional[str] = None
+    is_system: bool
+    created_at: Optional[datetime.datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class UploadSummaryResponse(BaseModel):
     statement_id: str
     filename: str

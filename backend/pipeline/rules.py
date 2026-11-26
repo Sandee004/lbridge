@@ -125,6 +125,39 @@ SEED_RULES = [
         "element": "capital",
         "priority": 95,
     },
+
+    # -------------------------------------------------------------
+    # 6. COST OF GOODS SOLD (COGS - Debits only)
+    # -------------------------------------------------------------
+    {
+        "pattern": r"\b(wholesale|bulk purchase|inventory restock|raw materials|packaging materials|supplier payment|trade inventory)\b",
+        "match_type": "word_regex",
+        "direction": "debit",
+        "element": "cogs",
+        "priority": 85,
+    },
+
+    # -------------------------------------------------------------
+    # 7. INTERNAL TRANSFERS (Any direction)
+    # -------------------------------------------------------------
+    {
+        "pattern": r"\b(internal trf|own account trf|transfer between accounts|inter-account|sweep|petty cash)\b",
+        "match_type": "word_regex",
+        "direction": "any",
+        "element": "transfer",
+        "priority": 90,
+    },
+
+    # -------------------------------------------------------------
+    # 8. TAXES & VAT (Debits only)
+    # -------------------------------------------------------------
+    {
+        "pattern": r"\b(firs|fgn stamp duty|value added tax|wht remittance|tax authority|withholding tax|customs duty)\b",
+        "match_type": "word_regex",
+        "direction": "debit",
+        "element": "taxes",
+        "priority": 95,
+    },
 ]
 
 

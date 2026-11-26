@@ -5,7 +5,7 @@ import type {
   BackendRule,
   BackendStatement,
   BackendTransaction,
-  FinancialElement,
+  CategoryItem,
   UploadSummary,
   WorkspacePage,
 } from '../types';
@@ -80,6 +80,7 @@ export const Workspace: React.FC = () => {
   // Backend Data State
   const [statements, setStatements] = useState<BackendStatement[]>([]);
   const [rules, setRules] = useState<BackendRule[]>([]);
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -196,6 +197,42 @@ export const Workspace: React.FC = () => {
     if (!res.ok) throw new Error('Failed to delete rule');
   };
 
+  const fetchCategoriesAPI = async (): Promise<CategoryItem[]> => {
+    const res = await fetch(`${BASE_URL}/statements/categories`, { credentials: 'include' });
+    if (!res.ok) return [];
+    return res.json();
+  };
+
+  const createCategoryAPI = async (
+    name: string,
+    direction: string = 'debit',
+    color: string = 'slate',
+    description?: string
+  ): Promise<CategoryItem> => {
+    const res = await fetch(`${BASE_URL}/statements/categories`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, direction, color, description }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to create category' }));
+      throw new Error(err.detail || 'Failed to create category');
+    }
+    return res.json();
+  };
+
+  const deleteCategoryAPI = async (categoryId: number): Promise<void> => {
+    const res = await fetch(`${BASE_URL}/statements/categories/${categoryId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to delete category' }));
+      throw new Error(err.detail || 'Failed to delete category');
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await fetch(`${BASE_URL}/auth/logout`, {
@@ -216,12 +253,14 @@ export const Workspace: React.FC = () => {
 
   const refreshData = async () => {
     try {
-      const [fetchedStatements, fetchedRules] = await Promise.all([
+      const [fetchedStatements, fetchedRules, fetchedCategories] = await Promise.all([
         fetchStatementsAPI(),
         fetchRulesAPI(),
+        fetchCategoriesAPI(),
       ]);
       setStatements(fetchedStatements);
       setRules(fetchedRules);
+      setCategories(fetchedCategories);
     } catch (err: unknown) {
       if (err instanceof Error && err.message !== 'UNAUTHORIZED') {
         showToast(err.message, 'error');
@@ -234,13 +273,15 @@ export const Workspace: React.FC = () => {
 
     async function initialize() {
       try {
-        const [fetchedStatements, fetchedRules] = await Promise.all([
+        const [fetchedStatements, fetchedRules, fetchedCategories] = await Promise.all([
           fetchStatementsAPI(),
           fetchRulesAPI(),
+          fetchCategoriesAPI(),
         ]);
         if (active) {
           setStatements(fetchedStatements);
           setRules(fetchedRules);
+          setCategories(fetchedCategories);
 
           // Restore or select first statement
           if (fetchedStatements.length > 0) {
@@ -318,20 +359,21 @@ export const Workspace: React.FC = () => {
 
   // Totals
   const elementTotals = useMemo(() => {
-    const totals: Record<Exclude<FinancialElement, 'Needs Review'>, number> = {
-      Assets: 0,
-      Liabilities: 0,
-      Income: 0,
-      Expenses: 0,
-      Capital: 0,
-    };
+    const totals: Record<string, number> = {};
     let totalCredits = 0;
     let totalDebits = 0;
+
+    categories.forEach((c) => {
+      totals[c.name] = 0;
+    });
+    ['Assets', 'Liabilities', 'Income', 'Expenses', 'Capital', 'Cost of Goods Sold', 'Internal Transfer', 'Taxes & VAT'].forEach((k) => {
+      if (totals[k] === undefined) totals[k] = 0;
+    });
 
     allTransactions.forEach((t) => {
       const elem = normalizeElement(t.element);
       if (elem !== 'Needs Review') {
-        totals[elem] += t.amount;
+        totals[elem] = (totals[elem] || 0) + t.amount;
       }
       if (t.direction === 'credit') {
         totalCredits += t.amount;
@@ -341,12 +383,12 @@ export const Workspace: React.FC = () => {
     });
 
     return { ...totals, totalCredits, totalDebits, netFlow: totalCredits - totalDebits };
-  }, [allTransactions]);
+  }, [allTransactions, categories]);
 
   // Handlers
   const handleResolve = async (
     tx: BackendTransaction,
-    chosenElement: Exclude<FinancialElement, 'Needs Review'>,
+    chosenElement: string,
     saveRule: boolean
   ) => {
     const cleanPattern = tx.description_norm || tx.description_raw.split(/[-–—/]/)[0].trim();
@@ -379,7 +421,7 @@ export const Workspace: React.FC = () => {
     }
   };
 
-  const handleReclassify = async (txnId: string, newElement: FinancialElement) => {
+  const handleReclassify = async (txnId: string, newElement: string) => {
     try {
       const updated = await updateTransactionAPI(txnId, newElement, false);
       setStatements((prev) =>
@@ -458,6 +500,33 @@ export const Workspace: React.FC = () => {
     showToast('Rule removed');
   };
 
+  const handleAddCategory = async (
+    name: string,
+    direction: string,
+    color: string,
+    description?: string
+  ) => {
+    try {
+      const newCat = await createCategoryAPI(name, direction, color, description);
+      setCategories((prev) => [...prev, newCat]);
+      showToast(`Created category "${newCat.name}"`);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to create category', 'error');
+      throw err;
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId: number) => {
+    try {
+      await deleteCategoryAPI(categoryId);
+      setCategories((prev) => prev.filter((c) => c.id !== categoryId));
+      showToast('Category deleted');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete category', 'error');
+      throw err;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900 selection:bg-emerald-100 selection:text-emerald-900">
       {/* Toast Notification */}
@@ -525,6 +594,7 @@ export const Workspace: React.FC = () => {
                 handlePageChange('ledger');
               }}
               formatCurrency={formatCurrency}
+              categories={categories}
             />
           )}
 
@@ -534,6 +604,7 @@ export const Workspace: React.FC = () => {
               onResolve={handleResolve}
               onNavigate={handlePageChange}
               formatCurrency={formatCurrency}
+              categories={categories}
             />
           )}
 
@@ -543,6 +614,7 @@ export const Workspace: React.FC = () => {
               onReclassify={handleReclassify}
               formatCurrency={formatCurrency}
               initialElementFilter={ledgerElementFilter}
+              categories={categories}
             />
           )}
 
@@ -551,6 +623,7 @@ export const Workspace: React.FC = () => {
               rules={rules}
               onAddRule={handleAddRule}
               onDeleteRule={handleDeleteRule}
+              categories={categories}
             />
           )}
 
@@ -558,6 +631,9 @@ export const Workspace: React.FC = () => {
             <SettingsView
               userEmail={userEmail}
               onShowToast={showToast}
+              categories={categories}
+              onAddCategory={handleAddCategory}
+              onDeleteCategory={handleDeleteCategory}
             />
           )}
         </main>

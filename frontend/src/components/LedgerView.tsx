@@ -1,33 +1,31 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, Search } from 'lucide-react';
-import type { BackendTransaction, FinancialElement } from '../types';
+import { ChevronDown, Filter, Search } from 'lucide-react';
+import type { BackendTransaction, CategoryItem } from '../types';
 import { normalizeElement } from '../types';
-import { ELEMENT_BADGE } from '../data/mockData';
+import { getCategoryBadge } from '../data/mockData';
 
 interface LedgerViewProps {
   transactions: BackendTransaction[];
-  onReclassify: (txnId: string, element: FinancialElement) => void;
+  onReclassify: (txnId: string, element: string) => void;
   formatCurrency: (val?: number | null) => string;
   initialElementFilter?: string;
+  categories: CategoryItem[];
 }
-
-const VALID_ELEMENTS: FinancialElement[] = [
-  'Assets',
-  'Liabilities',
-  'Income',
-  'Expenses',
-  'Capital',
-  'Needs Review',
-];
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
   transactions,
   onReclassify,
   formatCurrency,
   initialElementFilter = 'All',
+  categories,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [elementFilter, setElementFilter] = useState<string>(initialElementFilter);
+
+  const filterOptions = useMemo(() => {
+    const names = categories.map((c) => c.name);
+    return ['All', ...names, 'Needs Review'];
+  }, [categories]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
@@ -56,21 +54,26 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           />
         </div>
 
-        {/* Element Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {['All', ...VALID_ELEMENTS].map((elem) => (
-            <button
-              key={elem}
-              onClick={() => setElementFilter(elem)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                elementFilter === elem
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
+        {/* Category Filter Dropdown */}
+        <div className="flex items-center gap-2 shrink-0">
+          <label className="text-xs font-semibold text-slate-500 whitespace-nowrap flex items-center gap-1.5">
+            <Filter className="h-3.5 w-3.5 text-slate-400" />
+            <span>Category:</span>
+          </label>
+          <div className="relative min-w-[200px]">
+            <select
+              value={elementFilter}
+              onChange={(e) => setElementFilter(e.target.value)}
+              className="w-full appearance-none cursor-pointer rounded-lg border border-slate-200 bg-slate-50 py-2 pl-3 pr-8 text-xs font-semibold text-slate-800 shadow-2xs hover:border-emerald-500 focus:border-emerald-500 focus:bg-white focus:outline-none transition-all"
             >
-              {elem}
-            </button>
-          ))}
+              {filterOptions.map((elem) => (
+                <option key={elem} value={elem}>
+                  {elem === 'All' ? 'All Categories' : elem}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+          </div>
         </div>
       </div>
 
@@ -97,7 +100,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             ) : (
               filteredTransactions.map((t) => {
                 const displayElem = normalizeElement(t.element);
-                const badge = ELEMENT_BADGE[displayElem];
+                const badge = getCategoryBadge(displayElem);
 
                 // Simple finance source label: 'Rule', 'AI', or 'Manual'
                 let sourceLabel = 'Rule';
@@ -140,15 +143,16 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         <select
                           value={displayElem}
                           onChange={(e) =>
-                            onReclassify(t.id, e.target.value as FinancialElement)
+                            onReclassify(t.id, e.target.value)
                           }
                           className={`appearance-none cursor-pointer rounded-full px-2.5 py-0.5 pr-6 text-xs font-semibold border ${badge.badge} focus:outline-none focus:ring-1 focus:ring-slate-400`}
                         >
-                          {VALID_ELEMENTS.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
+                          {categories.map((opt) => (
+                            <option key={opt.id} value={opt.name}>
+                              {opt.name}
                             </option>
                           ))}
+                          <option value="Needs Review">Needs Review</option>
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-2 top-1.5 h-3 w-3 opacity-60 text-current" />
                       </div>

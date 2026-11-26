@@ -7,29 +7,22 @@ import {
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import type { BackendStatement, FinancialElement, WorkspacePage } from '../types';
-import { ELEMENT_BADGE } from '../data/mockData';
+import type { BackendStatement, CategoryItem, WorkspacePage } from '../types';
+import { getCategoryBadge } from '../data/mockData';
 
 interface OverviewViewProps {
   activeStatement: BackendStatement | null;
-  elementTotals: Record<Exclude<FinancialElement, 'Needs Review'>, number> & {
+  elementTotals: Record<string, number> & {
     totalCredits: number;
     totalDebits: number;
     netFlow: number;
   };
   pendingCount: number;
   onNavigate: (page: WorkspacePage) => void;
-  onFilterElement: (elem: FinancialElement) => void;
+  onFilterElement: (elem: string) => void;
   formatCurrency: (val?: number | null) => string;
+  categories: CategoryItem[];
 }
-
-const VALID_ELEMENTS: Exclude<FinancialElement, 'Needs Review'>[] = [
-  'Assets',
-  'Liabilities',
-  'Income',
-  'Expenses',
-  'Capital',
-];
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
   activeStatement,
@@ -38,6 +31,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   onNavigate,
   onFilterElement,
   formatCurrency,
+  categories,
 }) => {
   return (
     <div className="space-y-6">
@@ -145,13 +139,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         </div>
       </div>
 
-      {/* 5 Financial Elements Breakdown */}
+      {/* Accounting Categories Breakdown */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">5 Financial Elements Distribution</h3>
+            <h3 className="text-sm font-bold text-slate-900">Accounting Elements & Categories Distribution</h3>
             <p className="text-xs text-slate-500">
-              Categorized according to standard financial accounting standards
+              Categorized according to standard chart of accounts (Zoho Books / IFRS)
             </p>
           </div>
           <button
@@ -163,21 +157,21 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {VALID_ELEMENTS.map((elem) => {
-            const badge = ELEMENT_BADGE[elem];
-            const amount = elementTotals[elem];
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {categories.map((cat) => {
+            const badge = getCategoryBadge(cat.name, cat.color);
+            const amount = elementTotals[cat.name] || 0;
             return (
               <div
-                key={elem}
+                key={cat.id}
                 onClick={() => {
-                  onFilterElement(elem);
+                  onFilterElement(cat.name);
                   onNavigate('ledger');
                 }}
                 className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800">{elem}</span>
+                  <span className="text-xs font-bold text-slate-800">{cat.name}</span>
                   <span className={`h-2.5 w-2.5 rounded-full ${badge.dot}`} />
                 </div>
                 <div className="mt-3">

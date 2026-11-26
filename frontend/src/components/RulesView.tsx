@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
-import type { BackendRule, FinancialElement } from '../types';
+import type { BackendRule, CategoryItem } from '../types';
 import { normalizeElement } from '../types';
-import { ELEMENT_BADGE } from '../data/mockData';
+import { getCategoryBadge } from '../data/mockData';
 
 interface RulesViewProps {
   rules: BackendRule[];
   onAddRule: (pattern: string, element: string, direction: string, priority: number) => Promise<void>;
   onDeleteRule: (ruleId: number) => Promise<void>;
+  categories: CategoryItem[];
 }
 
 // Clean raw regex patterns like "\b(mtn|airtel|glo)\b" into human-friendly keyword lists
@@ -20,10 +21,10 @@ function formatKeywords(pattern: string): string[] {
   return parts.length > 0 ? parts : [pattern];
 }
 
-export const RulesView: React.FC<RulesViewProps> = ({ rules, onAddRule, onDeleteRule }) => {
+export const RulesView: React.FC<RulesViewProps> = ({ rules, onAddRule, onDeleteRule, categories }) => {
   const [search, setSearch] = useState('');
   const [newPattern, setNewPattern] = useState('');
-  const [newElement, setNewElement] = useState<FinancialElement>('Expenses');
+  const [newElement, setNewElement] = useState<string>('Expenses');
   const [newDirection, setNewDirection] = useState<'any' | 'debit' | 'credit'>('any');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -86,14 +87,14 @@ export const RulesView: React.FC<RulesViewProps> = ({ rules, onAddRule, onDelete
             </label>
             <select
               value={newElement}
-              onChange={(e) => setNewElement(e.target.value as FinancialElement)}
+              onChange={(e) => setNewElement(e.target.value)}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 focus:border-emerald-500 focus:bg-white focus:outline-none"
             >
-              <option value="Expenses">Expenses</option>
-              <option value="Assets">Assets</option>
-              <option value="Liabilities">Liabilities</option>
-              <option value="Income">Income</option>
-              <option value="Capital">Capital</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -165,7 +166,7 @@ export const RulesView: React.FC<RulesViewProps> = ({ rules, onAddRule, onDelete
               ) : (
                 filteredRules.map((rule) => {
                   const elem = normalizeElement(rule.element);
-                  const badge = ELEMENT_BADGE[elem];
+                  const badge = getCategoryBadge(elem);
                   const keywords = formatKeywords(rule.pattern);
 
                   return (

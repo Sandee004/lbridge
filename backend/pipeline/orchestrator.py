@@ -3,13 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .rules import seed_default_rules, apply_rules_to_transactions
 from .llm import classify_unmatched_transactions
+from .categories import seed_default_categories
 
 
 def validate_and_guard(txn: Dict[str, Any]) -> None:
     """
     Applies deterministic sanity guardrails to prevent accounting contradictions:
     - Income CANNOT be a debit.
-    - Expense CANNOT be a credit (might be an expense refund, but not direct expense).
+    - Expense / COGS CANNOT be a credit (might be an expense refund, but not direct cost).
     - Amount must be > 0.
     """
     direction = txn.get("direction", "debit")
@@ -21,12 +22,13 @@ def validate_and_guard(txn: Dict[str, Any]) -> None:
         txn["reason"] = "Sanity check failed: Transaction amount is zero or negative."
         return
 
-    if element == "income" and direction == "debit":
+    elem_lower = str(element).lower().replace(" ", "_")
+    if elem_lower == "income" and direction == "debit":
         txn["element"] = "needs_review"
         txn["reason"] = "Guardrail: Income cannot be a debit (money out). Demoted to Needs Review."
-    elif element == "expense" and direction == "credit":
+    elif elem_lower in ["expense", "cogs"] and direction == "credit":
         txn["element"] = "needs_review"
-        txn["reason"] = "Guardrail: Expense cannot be a credit (money in) — possible refund. Demoted to Needs Review."
+        txn["reason"] = f"Guardrail: {element} cannot be a credit (money in) — possible refund. Demoted to Needs Review."
 
 
 async def run_classification_pipeline(
@@ -35,7 +37,7 @@ async def run_classification_pipeline(
 ) -> List[Dict[str, Any]]:
     """
     Orchestrates the multi-tier classification funnel:
-    1. Ensures default rules are seeded.
+    1. Ensures default categories and rules are seeded.
     2. Tier-1: Fast, deterministic word-boundary regex rules (0ms, 100% precision).
     3. Tier-2: Local Ollama model (Qwen) with batching, few-shot memory, and JSON schema.
     4. Guardrails: Accounting sanity validators.
@@ -43,7 +45,8 @@ async def run_classification_pipeline(
     if not transactions:
         return []
 
-    # 1. Seed rules if database is fresh
+    # 1. Seed categories & rules if database is fresh
+    await seed_default_categories(db)
     await seed_default_rules(db)
 
     # 2. Tier 1: Rules & Memory

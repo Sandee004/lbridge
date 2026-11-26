@@ -1,16 +1,20 @@
+import hashlib
 import os
 from typing import List
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models import Override, Rule, Statement, Transaction, User
+from models import Category, Override, Rule, Statement, Transaction, User
 from utils import get_current_user
 from parser import parse_pdf_statement, parse_excel_or_csv_statement
-from pipeline import run_classification_pipeline
+from pipeline import run_classification_pipeline, seed_default_categories
+from pipeline.categories import slugify
 from schemas import (
+    CategoryCreate,
+    CategoryResponse,
     RuleCreateRequest,
     RuleResponse,
     StatementResponse,
@@ -30,6 +34,33 @@ async def _process_statement_bytes(content: bytes, filename: str, db: AsyncSessi
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported file format '{ext}'. LedgerBridge supports: {', '.join(supported_exts)}.",
+        )
+
+    # 0. Check if this exact file content was already uploaded with transactions
+    source_hash = hashlib.sha256(content).hexdigest()
+    stmt_match = await db.execute(
+        select(Statement).options(selectinload(Statement.transactions)).where(Statement.source_hash == source_hash)
+    )
+    existing_file_stmt = stmt_match.scalars().first()
+    if existing_file_stmt and len(existing_file_stmt.transactions) > 0:
+        return UploadSummaryResponse(
+            statement_id=existing_file_stmt.id,
+            filename=existing_file_stmt.filename,
+            bank_name=existing_file_stmt.bank_name,
+            currency=existing_file_stmt.currency,
+            math_ok=existing_file_stmt.math_ok,
+            math_error_detail=existing_file_stmt.math_error_detail,
+            opening_balance=existing_file_stmt.opening_balance,
+            closing_balance=existing_file_stmt.closing_balance,
+            total_credits=existing_file_stmt.total_credits,
+            total_debits=existing_file_stmt.total_debits,
+            total_rows_parsed=len(existing_file_stmt.transactions),
+            new_rows_stored=0,
+            duplicates_skipped=len(existing_file_stmt.transactions),
+            rules_count=0,
+            llm_count=0,
+            needs_review_count=sum(1 for t in existing_file_stmt.transactions if t.element == "needs_review"),
+            message=f"Statement '{existing_file_stmt.filename}' is already active with {len(existing_file_stmt.transactions)} transactions.",
         )
 
     try:
@@ -56,6 +87,7 @@ async def _process_statement_bytes(content: bytes, filename: str, db: AsyncSessi
         total_debits=parsed_data["total_debits"],
         math_ok=parsed_data["math_ok"],
         math_error_detail=parsed_data["math_error_detail"],
+        source_hash=source_hash,
     )
     db.add(statement)
     await db.flush()
@@ -108,6 +140,40 @@ async def _process_statement_bytes(content: bytes, filename: str, db: AsyncSessi
         )
         db.add(txn)
         new_rows_stored += 1
+
+    # If no new transactions were stored because all are already in database, don't leave an empty statement
+    if new_rows_stored == 0 and parsed_data.get("transaction_count", 0) > 0:
+        await db.rollback()
+        # Find existing statement
+        sample_fp = classified_txns[0]["fingerprint"] if classified_txns else None
+        existing_stmt = None
+        if sample_fp:
+            match = await db.execute(select(Transaction.statement_id).where(Transaction.fingerprint == sample_fp))
+            s_id = match.scalars().first()
+            if s_id:
+                s_res = await db.execute(select(Statement).options(selectinload(Statement.transactions)).where(Statement.id == s_id))
+                existing_stmt = s_res.scalars().first()
+
+        if existing_stmt:
+            return UploadSummaryResponse(
+                statement_id=existing_stmt.id,
+                filename=existing_stmt.filename,
+                bank_name=existing_stmt.bank_name,
+                currency=existing_stmt.currency,
+                math_ok=existing_stmt.math_ok,
+                math_error_detail=existing_stmt.math_error_detail,
+                opening_balance=existing_stmt.opening_balance,
+                closing_balance=existing_stmt.closing_balance,
+                total_credits=existing_stmt.total_credits,
+                total_debits=existing_stmt.total_debits,
+                total_rows_parsed=parsed_data["transaction_count"],
+                new_rows_stored=0,
+                duplicates_skipped=duplicates_skipped,
+                rules_count=rules_count,
+                llm_count=llm_count,
+                needs_review_count=sum(1 for t in existing_stmt.transactions if t.element == "needs_review"),
+                message=f"All {duplicates_skipped} transactions are already present in '{existing_stmt.filename}'. Re-selected existing statement.",
+            )
 
     await db.commit()
     await db.refresh(statement)
@@ -197,6 +263,76 @@ async def load_sample_statement(
         content = f.read()
 
     return await _process_statement_bytes(content, filename, db)
+
+
+# ------------------------------
+# Category Management Endpoints
+# ------------------------------
+
+@router.get("/categories", response_model=List[CategoryResponse])
+async def list_categories(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve all standard and custom accounting categories."""
+    await seed_default_categories(db)
+    result = await db.execute(select(Category).order_by(Category.is_system.desc(), Category.id.asc()))
+    return result.scalars().all()
+
+
+@router.post("/categories", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
+async def create_category(
+    category_data: CategoryCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new custom accounting category."""
+    name = category_data.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category name cannot be empty.")
+
+    slug = slugify(name)
+    existing = await db.execute(select(Category).where((Category.name == name) | (Category.slug == slug)))
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Category '{name}' already exists.",
+        )
+
+    cat = Category(
+        name=name,
+        slug=slug,
+        direction=category_data.direction,
+        color=category_data.color,
+        description=category_data.description,
+        is_system=False,
+    )
+    db.add(cat)
+    await db.commit()
+    await db.refresh(cat)
+    return cat
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category(
+    category_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a custom accounting category."""
+    result = await db.execute(select(Category).where(Category.id == category_id))
+    cat = result.scalars().first()
+    if not cat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.")
+    if cat.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="System core categories cannot be deleted.",
+        )
+
+    await db.delete(cat)
+    await db.commit()
+    return None
 
 
 # ------------------------------
@@ -353,6 +489,8 @@ async def list_statements(
 
     response = []
     for s in statements:
+        if len(s.transactions) == 0:
+            continue
         response.append(
             StatementResponse(
                 id=s.id,

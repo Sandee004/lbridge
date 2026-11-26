@@ -133,32 +133,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               onClick={() => onPageChange(item.id)}
-              className={`w-full flex items-center rounded-lg px-3 py-2.5 text-xs font-semibold transition-all ${
+              className={`relative w-full flex items-center rounded-lg px-3 py-2.5 text-xs font-semibold transition-all ${
                 collapsed ? 'justify-center px-0' : 'justify-between'
               } ${
                 isActive
                   ? 'bg-emerald-50 text-emerald-800 font-bold shadow-xs'
                   : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
               }`}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? `${item.label}${item.badge ? ` (${item.badge})` : ''}` : undefined}
             >
-              <div className="flex items-center gap-2.5">
+              <div className="relative flex items-center gap-2.5">
                 <Icon
                   className={`h-4 w-4 shrink-0 ${
                     isActive ? 'text-emerald-600' : 'text-slate-400'
                   }`}
                 />
+                {collapsed && item.badge !== undefined && item.badge > 0 && (
+                  <span
+                    className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-white"
+                    title={`${item.badge} pending review`}
+                  />
+                )}
                 {!collapsed && <span>{item.label}</span>}
               </div>
-              {item.badge !== undefined && item.badge > 0 && (
-                <span
-                  className={`rounded-full font-mono font-bold text-amber-800 border border-amber-200 ${
-                    collapsed
-                      ? 'absolute top-1 right-1 h-2 w-2 bg-amber-500 p-0 rounded-full border-none'
-                      : 'bg-amber-100 px-2 py-0.5 text-[10px]'
-                  }`}
-                >
-                  {!collapsed && item.badge}
+              {!collapsed && item.badge !== undefined && item.badge > 0 && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800 border border-amber-200">
+                  {item.badge}
                 </span>
               )}
             </button>

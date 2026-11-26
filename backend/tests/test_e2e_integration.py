@@ -97,6 +97,50 @@ async def run_e2e():
             assert "STARLINK_TEST" in rule_patterns, f"Rule not persisted: {rule_patterns}"
             print("✅ Verified rule STARLINK_TEST exists in rules database")
 
+        # 9. Verify Category Management
+        res = await client.get("/categories", headers=headers)
+        assert res.status_code == 200, f"Get categories failed: {res.text}"
+        cats = res.json()
+        cat_names = [c["name"] for c in cats]
+        assert "Cost of Goods Sold" in cat_names, f"COGS missing from categories: {cat_names}"
+        assert "Internal Transfer" in cat_names, f"Transfer missing from categories: {cat_names}"
+        assert "Taxes & VAT" in cat_names, f"Taxes missing from categories: {cat_names}"
+        print(f"✅ Verified {len(cats)} default accounting categories loaded (including COGS, Transfers, Taxes)")
+
+        # Create custom category
+        custom_cat_payload = {
+            "name": "Direct Materials",
+            "direction": "debit",
+            "color": "amber",
+            "description": "Raw materials and packaging"
+        }
+        res = await client.post("/categories", json=custom_cat_payload, headers=headers)
+        assert res.status_code == 201, f"Create category failed: {res.text}"
+        new_cat = res.json()
+        assert new_cat["name"] == "Direct Materials"
+        assert new_cat["slug"] == "direct_materials"
+        assert not new_cat["is_system"]
+        print(f"✅ Created custom category '{new_cat['name']}' (slug: {new_cat['slug']})")
+
+        # Verify deleting system category is rejected
+        sys_cat = next(c for c in cats if c["is_system"])
+        res = await client.delete(f"/categories/{sys_cat['id']}", headers=headers)
+        assert res.status_code == 400, "Expected 400 when attempting to delete system category"
+        print(f"✅ Protected core category '{sys_cat['name']}' from deletion (400 rejected)")
+
+        # Delete custom category
+        res = await client.delete(f"/categories/{new_cat['id']}", headers=headers)
+        assert res.status_code == 204, f"Delete custom category failed: {res.status_code}"
+        print(f"✅ Successfully deleted custom category '{new_cat['name']}'")
+
+        # Verify no statements are empty
+        res = await client.get("/statements", headers=headers)
+        assert res.status_code == 200
+        active_stmts = res.json()
+        for s in active_stmts:
+            assert s["transaction_count"] > 0, f"Empty statement found: {s['id']}"
+        print(f"✅ Verified all {len(active_stmts)} statements are active and non-empty (0 empty statements)")
+
     print("\n🎉 ALL SECURE BACKEND & INTEGRATION CHECKS PASSED PERFECTLY!")
 
 if __name__ == "__main__":

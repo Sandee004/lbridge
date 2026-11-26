@@ -1,10 +1,15 @@
-export type FinancialElement =
-  | 'Assets'
-  | 'Liabilities'
-  | 'Income'
-  | 'Expenses'
-  | 'Capital'
-  | 'Needs Review';
+export type FinancialElement = string;
+
+export interface CategoryItem {
+  id: number;
+  name: string;
+  slug: string;
+  direction: 'any' | 'debit' | 'credit';
+  color: string;
+  description?: string | null;
+  is_system: boolean;
+  created_at?: string | null;
+}
 
 export type ClassificationTier = 'rule' | 'llm' | 'user' | 'validator' | 'ingestion';
 
@@ -81,31 +86,34 @@ export type AppView = 'landing' | 'auth' | 'workspace';
 export type WorkspacePage = 'overview' | 'review' | 'ledger' | 'rules' | 'settings';
 
 // Helper to normalize element to UI display name
-export function normalizeElement(raw?: string | null): FinancialElement {
+export function normalizeElement(raw?: string | null): string {
   if (!raw) return 'Needs Review';
   const lower = raw.toLowerCase().trim();
+  if (lower === 'needs_review' || lower === 'needs review') return 'Needs Review';
   if (lower === 'asset' || lower === 'assets') return 'Assets';
   if (lower === 'liability' || lower === 'liabilities') return 'Liabilities';
   if (lower === 'income') return 'Income';
   if (lower === 'expense' || lower === 'expenses') return 'Expenses';
   if (lower === 'capital' || lower === 'equity') return 'Capital';
-  return 'Needs Review';
+  if (lower === 'cogs' || lower === 'cost_of_goods_sold' || lower === 'cost of goods sold') return 'Cost of Goods Sold';
+  if (lower === 'transfer' || lower === 'internal_transfer' || lower === 'internal transfer') return 'Internal Transfer';
+  if (lower === 'taxes' || lower === 'taxes_and_vat' || lower === 'taxes & vat' || lower === 'tax') return 'Taxes & VAT';
+  
+  // Custom categories: convert snake_case to Title Case
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // Helper to convert UI display name to backend element value
-export function toBackendElement(elem: FinancialElement): string {
-  switch (elem) {
-    case 'Assets':
-      return 'asset';
-    case 'Liabilities':
-      return 'liability';
-    case 'Income':
-      return 'income';
-    case 'Expenses':
-      return 'expense';
-    case 'Capital':
-      return 'capital';
-    default:
-      return 'needs_review';
-  }
+export function toBackendElement(elem: string): string {
+  const lower = elem.toLowerCase().trim();
+  if (lower === 'needs review' || lower === 'needs_review') return 'needs_review';
+  if (lower === 'assets' || lower === 'asset') return 'asset';
+  if (lower === 'liabilities' || lower === 'liability') return 'liability';
+  if (lower === 'expenses' || lower === 'expense') return 'expense';
+  if (lower === 'cost of goods sold' || lower === 'cogs') return 'cogs';
+  if (lower === 'internal transfer' || lower === 'transfer') return 'transfer';
+  if (lower === 'taxes & vat' || lower === 'taxes and vat' || lower === 'taxes') return 'taxes';
+  return lower.replace(/\s+/g, '_');
 }
