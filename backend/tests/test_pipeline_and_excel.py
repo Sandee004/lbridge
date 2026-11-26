@@ -1,6 +1,11 @@
 import asyncio
 import io
 import os
+import sys
+
+# Ensure backend root is on sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import UploadFile
 from database import AsyncSessionLocal, engine, Base
 from routers.ingester import upload_statement, list_statements, get_statement

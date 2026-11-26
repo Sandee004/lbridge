@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DIST_DIR, build_frontend
 from database import AsyncSessionLocal, Base, engine
 import models
-from routers import auth, ingester, categories
+from routers import auth, categories, rules, statements, transactions, ingester
 load_dotenv()
 
 # Build frontend automatically if outdated and not in production deploy override
@@ -54,10 +54,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount API Routers
+# Mount API Routers (static paths before dynamic /{statement_id})
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(ingester.router, prefix="/statements", tags=["statements"])
+app.include_router(rules.router, prefix="/statements", tags=["rules"])
+app.include_router(transactions.router, prefix="/statements", tags=["transactions"])
+app.include_router(categories.router, prefix="/statements/categories", tags=["categories"])
 app.include_router(categories.router, prefix="/categories", tags=["categories"])
+app.include_router(statements.router, prefix="/statements", tags=["statements"])
 
 
 @app.get("/health", tags=["system"])

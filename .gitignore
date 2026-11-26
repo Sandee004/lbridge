@@ -17,3 +17,5 @@ LedgerBridge MVP Architecture Guide.pdf.txt
 guide.md
 *.db
 *.sqlite3
+
+docker-compose.yml

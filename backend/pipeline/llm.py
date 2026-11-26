@@ -34,19 +34,21 @@ OLLAMA_RESULT_SCHEMA = {
     "required": ["results"]
 }
 
-SYSTEM_PROMPT = """You are a precise chartered accountant and financial statement auditor.
-Your job is to classify bank transaction descriptions into one of the 5 financial elements:
-1. asset: Long-term business property or valuable equipment (e.g. laptops, vehicles, machinery, furniture).
-2. liability: Third-party loans, lines of credit, or debt repayments.
-3. income: Sales revenue, consulting fees, customer deposits, POS settlements, freelance earnings (MUST be credit / money in).
-4. expense: Operational running costs, SaaS subscriptions, internet data, electricity, transport, fuel, meals, bank fees (MUST be debit / money out).
-5. capital: Owner's equity contribution or personal drawings.
-6. needs_review: Vague person-to-person transfers, unclear abbreviations, or transactions lacking clear business purpose.
+SYSTEM_PROMPT = """You are a precise chartered accountant, forensic auditor, and financial controller.
+Your job is to classify bank transaction descriptions into the 5 core accounting elements or flag for review:
+1. asset: Durable property, computing hardware, office machinery, vehicles, long-term capital investments (> ₦100,000 / $100 with multi-year life).
+2. liability: Third-party commercial debt, bank overdraft repayments, credit facility settlements, loan principal obligations.
+3. income: Direct client sales revenue, customer invoice settlements, POS sales settlements, consulting fees, service retainers (MUST be credit / money in).
+4. expense: Day-to-day operational expenditures, SaaS tooling, cloud hosting, utilities, data/telecom, office supplies, food, local transport, statutory bank charges (MUST be debit / money out).
+5. capital: Founder/shareholder equity injections, director loan capital introductions, or personal owner drawings.
+6. needs_review: Ambiguous peer-to-peer transfers, personal names without merchant context, vague abbreviations, or transactions requiring human audit.
 
-CRITICAL ACCOUNTING RULES:
-- If a description is just an individual person's name or vague reference without merchant details (e.g. "MOBILE TRF TO PPL /...", "ATM WDL"), choose "needs_review".
-- Do not guess or hallucinate. "needs_review" is always preferred when purpose is uncertain.
-- Output MUST strictly match the required JSON schema with id, element, confidence (between 0.0 and 1.0), and a concise 1-sentence reason.
+CRITICAL FINANCIAL & AUDIT RULES:
+- DIRECTION INTEGRITY: Income CANNOT be a debit (money out). Expense CANNOT be a credit (money in) unless clearly marked as a vendor refund.
+- CAPITALIZATION VS EXPENSE: Routine recurring consumables, software licenses, and repairs under ₦100,000 are "expense". Fixed equipment (MacBooks, servers, machinery) is "asset".
+- DIRECT TRANSFERS & VENDOR CONTEXT: If a description is an individual's personal name with no commercial invoice or merchant context (e.g. "MOBILE TRF TO PPL /...", "ATM WDL", "TRF/FRM/..."), classify as "needs_review" with confidence < 0.80.
+- CONFIDENCE BENCHMARK: Be realistic with confidence. If you are less than 80% confident (confidence < 0.80), designate element as "needs_review".
+- CONSTRAINTS: Do not guess or hallucinate. Return strictly a JSON object conforming to the schema.
 """
 
 
@@ -139,8 +141,13 @@ async def classify_batch_with_ollama(
                 if tid in pred_map:
                     item = pred_map[tid]
                     elem = item.get("element", "needs_review")
-                    conf = float(item.get("confidence", 0.75))
+                    conf = float(item.get("confidence", 0.0))
                     reason = item.get("reason", "Classified by local LLM")
+
+                    # Enforce strict 80% (0.80) certainty threshold for automated financial accounting
+                    if conf < 0.80 and elem != "needs_review":
+                        elem = "needs_review"
+                        reason = f"Confidence ({int(conf * 100)}%) below 80% audit threshold — human confirmation required"
 
                     t["element"] = elem
                     t["tier"] = "llm"
