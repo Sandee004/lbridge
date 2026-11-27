@@ -273,15 +273,22 @@ def parse_pdf_statement(file_input: Union[str, bytes, BinaryIO], filename: str =
     # -------------------------------------------------------------
     # 5. Arithmetic Verification
     # -------------------------------------------------------------
-    if raw_transactions:
-        first_txn = raw_transactions[0]
-        last_txn = raw_transactions[-1]
+    if not raw_transactions:
+        raise ValueError(
+            "No transactions could be parsed from this PDF statement. "
+            "Please ensure it contains a recognizable transaction table with dates, descriptions, and amounts."
+        )
 
-        if opening_balance is None and first_txn["balance"] != Decimal("0.00"):
-            opening_balance = first_txn["balance"] + first_txn["debit"] - first_txn["credit"]
+    first_txn = raw_transactions[0]
+    last_txn = raw_transactions[-1]
 
-        if closing_balance is None and last_txn["balance"] != Decimal("0.00"):
-            closing_balance = last_txn["balance"]
+    if opening_balance is None and first_txn["balance"] != Decimal("0.00"):
+        opening_balance = first_txn["balance"] + first_txn["debit"] - first_txn["credit"]
+
+    if closing_balance is None and last_txn["balance"] != Decimal("0.00"):
+        closing_balance = last_txn["balance"]
+
+    balances_found = (opening_balance is not None and closing_balance is not None)
 
     if opening_balance is None:
         opening_balance = Decimal("0.00")
@@ -294,29 +301,33 @@ def parse_pdf_statement(file_input: Union[str, bytes, BinaryIO], filename: str =
     math_ok = True
     math_error_detail: Optional[str] = None
 
-    for r_idx, txn in enumerate(raw_transactions):
-        calc_total_credits += txn["credit"]
-        calc_total_debits += txn["debit"]
-        running_calc = running_calc - txn["debit"] + txn["credit"]
+    if not balances_found:
+        math_ok = False
+        math_error_detail = "Could not verify: balances not found"
+    else:
+        for r_idx, txn in enumerate(raw_transactions):
+            calc_total_credits += txn["credit"]
+            calc_total_debits += txn["debit"]
+            running_calc = running_calc - txn["debit"] + txn["credit"]
 
-        if txn["balance"] != Decimal("0.00"):
-            diff = abs(running_calc - txn["balance"])
-            if diff > Decimal("0.01"):
+            if txn["balance"] != Decimal("0.00"):
+                diff = abs(running_calc - txn["balance"])
+                if diff > Decimal("0.01"):
+                    math_ok = False
+                    math_error_detail = (
+                        f"Arithmetic discrepancy at row {r_idx + 1} ({txn['date']} - {txn['description_raw'][:35]}): "
+                        f"expected balance was ₦{running_calc:,.2f}, but statement shows ₦{txn['balance']:,.2f}."
+                    )
+                    break
+
+        if math_ok and closing_balance != Decimal("0.00"):
+            diff_close = abs(running_calc - closing_balance)
+            if diff_close > Decimal("0.01"):
                 math_ok = False
                 math_error_detail = (
-                    f"Arithmetic discrepancy at row {r_idx + 1} ({txn['date']} - {txn['description_raw'][:35]}): "
-                    f"expected balance was ₦{running_calc:,.2f}, but statement shows ₦{txn['balance']:,.2f}."
+                    f"Closing balance mismatch: opening (₦{opening_balance:,.2f}) + credits (₦{calc_total_credits:,.2f}) "
+                    f"- debits (₦{calc_total_debits:,.2f}) = ₦{running_calc:,.2f}, but statement specifies ₦{closing_balance:,.2f}."
                 )
-                break
-
-    if math_ok and closing_balance != Decimal("0.00"):
-        diff_close = abs(running_calc - closing_balance)
-        if diff_close > Decimal("0.01"):
-            math_ok = False
-            math_error_detail = (
-                f"Closing balance mismatch: opening (₦{opening_balance:,.2f}) + credits (₦{calc_total_credits:,.2f}) "
-                f"- debits (₦{calc_total_debits:,.2f}) = ₦{running_calc:,.2f}, but statement specifies ₦{closing_balance:,.2f}."
-            )
 
     processed_transactions = []
     for txn in raw_transactions:

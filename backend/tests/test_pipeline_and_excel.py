@@ -1,97 +1,111 @@
-import asyncio
 import io
-import os
-import sys
-
-# Ensure backend root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+from pathlib import Path
+import pytest
+import httpx
 from fastapi import UploadFile
-from database import AsyncSessionLocal, engine, Base
-from routers.ingester import upload_statement, list_statements, get_statement
-import models
+from routers.ingester import upload_statement, get_statement
+from parser.pdf_parser import parse_pdf_statement
+from parser.excel_parser import parse_excel_or_csv_statement
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
-async def run_comprehensive_test():
-    print("=" * 70)
-    print("LEDGERBRIDGE END-TO-END PIPELINE & PARSER VERIFICATION")
-    print("=" * 70)
 
-    # 1. Reset tables to ensure clean state
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    print("Database tables initialized.")
+@pytest.mark.asyncio
+async def test_pipeline_pdf_and_excel(db_session):
+    fixtures_dir = Path(__file__).resolve().parent / "fixtures"
+    pdf_path = fixtures_dir / "access_bank_statement.pdf"
+    if not pdf_path.exists():
+        pdf_path = Path(__file__).resolve().parent.parent.parent / "access_bank_statement.pdf"
 
-    # -------------------------------------------------------------
-    # Test 1: Upload Access Bank PDF statement through full pipeline
-    # -------------------------------------------------------------
-    pdf_path = os.path.join(os.path.dirname(__file__), "../access_bank_statement.pdf")
+    xlsx_path = fixtures_dir / "demo_statement.xlsx"
+    if not xlsx_path.exists():
+        xlsx_path = Path(__file__).resolve().parent.parent.parent / "demo_statement.xlsx"
+
     with open(pdf_path, "rb") as f:
         pdf_bytes = f.read()
 
-    print("\n--- Test 1: Ingesting Access Bank PDF (56 transactions) ---")
-    async with AsyncSessionLocal() as db:
-        upload_pdf = UploadFile(filename="access_bank_statement.pdf", file=io.BytesIO(pdf_bytes))
-        resp_pdf = await upload_statement(file=upload_pdf, db=db)
-        print("Upload Result:")
-        print(f"  Statement ID:         {resp_pdf.statement_id}")
-        print(f"  Bank:                 {resp_pdf.bank_name} ({resp_pdf.currency})")
-        print(f"  Math OK:              {resp_pdf.math_ok}")
-        print(f"  Total Rows Parsed:    {resp_pdf.total_rows_parsed}")
-        print(f"  Classified by Rules:  {resp_pdf.rules_count}")
-        print(f"  Processed by AI:      {resp_pdf.llm_count}")
-        print(f"  Needs Review Bucket:  {resp_pdf.needs_review_count}")
-        print(f"  New Rows Stored:      {resp_pdf.new_rows_stored}")
-        print(f"  Message:              {resp_pdf.message}")
-
-    # -------------------------------------------------------------
-    # Test 2: Ingest Excel statement (.xlsx)
-    # -------------------------------------------------------------
-    xlsx_path = os.path.join(os.path.dirname(__file__), "../demo_statement.xlsx")
     with open(xlsx_path, "rb") as f:
         xlsx_bytes = f.read()
 
-    print("\n--- Test 2: Ingesting Excel .xlsx Statement (35 transactions) ---")
-    async with AsyncSessionLocal() as db:
-        upload_xlsx = UploadFile(filename="demo_statement.xlsx", file=io.BytesIO(xlsx_bytes))
-        resp_xlsx = await upload_statement(file=upload_xlsx, db=db)
-        print("Upload Result:")
-        print(f"  Statement ID:         {resp_xlsx.statement_id}")
-        print(f"  Bank:                 {resp_xlsx.bank_name} ({resp_xlsx.currency})")
-        print(f"  Math OK:              {resp_xlsx.math_ok}")
-        print(f"  Total Rows Parsed:    {resp_xlsx.total_rows_parsed}")
-        print(f"  Classified by Rules:  {resp_xlsx.rules_count}")
-        print(f"  Processed by AI:      {resp_xlsx.llm_count}")
-        print(f"  Needs Review Bucket:  {resp_xlsx.needs_review_count}")
-        print(f"  New Rows Stored:      {resp_xlsx.new_rows_stored}")
-        print(f"  Message:              {resp_xlsx.message}")
+    # 1. Ingest PDF
+    upload_pdf = UploadFile(filename="access_bank_statement.pdf", file=io.BytesIO(pdf_bytes))
+    resp_pdf = await upload_statement(file=upload_pdf, db=db_session)
 
-    # -------------------------------------------------------------
-    # Test 3: Deduplication check on re-upload
-    # -------------------------------------------------------------
-    print("\n--- Test 3: Testing Deduplication on Re-uploading Excel ---")
-    async with AsyncSessionLocal() as db:
-        upload_xlsx_2 = UploadFile(filename="demo_statement.xlsx", file=io.BytesIO(xlsx_bytes))
-        resp_dedup = await upload_statement(file=upload_xlsx_2, db=db)
-        print(f"  New rows stored:      {resp_dedup.new_rows_stored} (Expected: 0)")
-        print(f"  Duplicates skipped:   {resp_dedup.duplicates_skipped} (Expected: 35)")
+    assert resp_pdf.statement_id is not None
+    assert resp_pdf.math_ok is True
+    assert resp_pdf.total_rows_parsed == 56
+    assert resp_pdf.new_rows_stored == 56
+    assert resp_pdf.rules_count > 0
 
-    # -------------------------------------------------------------
-    # Test 4: Inspect Categorized Rows from SQLite
-    # -------------------------------------------------------------
-    print("\n--- Test 4: Sample Classified Rows Breakdown ---")
-    async with AsyncSessionLocal() as db:
-        stmt = await get_statement(statement_id=resp_pdf.statement_id, db=db)
-        print(f"Showing sample classifications from statement '{stmt.bank_name}':")
-        for t in stmt.transactions[:12]:
-            tier_badge = f"[{t.tier.upper()}]" if t.tier else "[NONE]"
-            elem_badge = f"[{t.element.upper()}]" if t.element else "[UNKNOWN]"
-            print(f"  {t.date} | {tier_badge:<8} {elem_badge:<14} | ₦{t.amount:<10,.2f} | {t.description_raw[:45]}")
-            print(f"         Reason: {t.reason[:65]}")
+    # 2. Ingest Excel
+    upload_xlsx = UploadFile(filename="demo_statement.xlsx", file=io.BytesIO(xlsx_bytes))
+    resp_xlsx = await upload_statement(file=upload_xlsx, db=db_session)
 
-    print("\n" + "=" * 70)
-    print("ALL TESTS PASSED SUCCESSFULLY!")
-    print("=" * 70)
+    assert resp_xlsx.statement_id is not None
+    assert resp_xlsx.math_ok is True
+    assert resp_xlsx.total_rows_parsed == 35
+    assert resp_xlsx.new_rows_stored == 35
 
-if __name__ == "__main__":
-    asyncio.run(run_comprehensive_test())
+    # 3. Deduplication on re-upload
+    upload_xlsx_2 = UploadFile(filename="demo_statement.xlsx", file=io.BytesIO(xlsx_bytes))
+    resp_dedup = await upload_statement(file=upload_xlsx_2, db=db_session)
+
+    assert resp_dedup.new_rows_stored == 0
+    assert resp_dedup.duplicates_skipped == 35
+
+    # 4. Check classified rows
+    stmt = await get_statement(statement_id=resp_pdf.statement_id, db=db_session)
+    assert len(stmt.transactions) == 56
+    for t in stmt.transactions:
+        assert t.element in ["asset", "liability", "income", "expense", "capital", "needs_review", "cogs", "internal_transfer", "taxes_vat"]
+        assert t.tier in ["rule", "llm", "user", "ingestion"]
+
+
+def test_pdf_parser_raises_on_unrecognizable_table():
+    """P1.3: Feeding a PDF with no recognizable table raises ValueError."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.drawString(100, 700, "This is an essay about accounting principles.")
+    c.drawString(100, 680, "It does not contain any bank statements or transaction tables.")
+    c.drawString(100, 660, "There are no dates or debit/credit amounts here whatsoever.")
+    c.save()
+    buf.seek(0)
+    pdf_bytes = buf.read()
+
+    with pytest.raises(ValueError, match="No transactions could be parsed"):
+        parse_pdf_statement(pdf_bytes)
+
+
+def test_excel_parser_raises_on_empty_or_no_table():
+    """P1.3: Feeding an Excel/CSV with no table raises ValueError."""
+    empty_csv = "Random Header,Another Note\nJust random prose,No transactions here\n"
+    with pytest.raises(ValueError, match="Could not identify statement table columns|No transaction records found|No transactions could be parsed"):
+        parse_excel_or_csv_statement(empty_csv.encode("utf-8"), filename="test.csv")
+
+
+def test_missing_balances_marks_math_not_ok():
+    """P1.3: When balances cannot be found, math_ok is False and error detail is set."""
+    csv_data = (
+        "Date,Description,Debit,Credit\n"
+        "01/10/2026,Office Supplies,5000.00,0.00\n"
+        "02/10/2026,Client Retainer,0.00,15000.00\n"
+    )
+    res = parse_excel_or_csv_statement(csv_data.encode("utf-8"), filename="nobalance.csv")
+    assert res["transaction_count"] == 2
+    assert res["math_ok"] is False
+    assert res["math_error_detail"] == "Could not verify: balances not found"
+
+
+@pytest.mark.asyncio
+async def test_upload_unrecognizable_pdf_returns_422(client: httpx.AsyncClient, auth_headers: dict):
+    """P1.3: Uploading a PDF without recognizable transactions returns HTTP 422."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.drawString(100, 700, "Notice: Bank Holiday Announcement and Operational Updates.")
+    c.drawString(100, 680, "All branches will remain closed on national holidays.")
+    c.save()
+    buf.seek(0)
+
+    files = {"file": ("unrecognizable.pdf", buf.getvalue(), "application/pdf")}
+    res = await client.post("/statements/upload", files=files, headers=auth_headers)
+    assert res.status_code == 422, f"Expected 422 Unprocessable Entity, got {res.status_code}: {res.text}"

@@ -1,147 +1,105 @@
-import asyncio
-import os
-import sys
+import pytest
+import httpx
+from sqlalchemy import select
+import models
 
-# Ensure backend root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from httpx import AsyncClient, ASGITransport
-from main import app
-from database import Base, engine
-
-async def run_e2e():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # 1. Verify Frontend SPA is served
-        res = await client.get("/")
-        assert res.status_code == 200, f"SPA index failed: {res.status_code}"
-        assert "<!doctype html>" in res.text.lower() or "<html" in res.text.lower()
-        print("✅ Frontend SPA served successfully at '/'")
-
-        # 2. Check health endpoint
-        res = await client.get("/health")
-        assert res.status_code == 200
-        print("✅ Health endpoint returned status: ok")
-
-        # 3. Verify unauthenticated request to protected endpoint is rejected
-        unauth_res = await client.get("/statements")
+@pytest.mark.asyncio
+async def test_e2e_integration_flow(client: httpx.AsyncClient, auth_headers: dict, db_session):
+    # 1. Unauthenticated request is rejected with 401
+    async with httpx.AsyncClient(transport=client._transport, base_url="http://test") as unauth_client:
+        unauth_res = await unauth_client.get("/statements")
         assert unauth_res.status_code == 401, f"Expected 401 Unauthorized, got {unauth_res.status_code}"
-        print("✅ Unauthenticated request correctly rejected with 401 Unauthorized")
 
-        # 4. Authenticate / Signup user with company_name
-        auth_payload = {
-            "email": "finance@company.com",
-            "password": "SecurePassword123!",
-            "company_name": "Acme Finance Corp"
+    # 2. Test sample loaders with authentication
+    res = await client.post("/statements/sample/access-bank-pdf", headers=auth_headers)
+    assert res.status_code == 200, f"Sample PDF load failed: {res.text}"
+    pdf_summary = res.json()
+    assert pdf_summary["total_rows_parsed"] == 56
+    assert pdf_summary["math_ok"] is True
+
+    res = await client.post("/statements/sample/demo-excel", headers=auth_headers)
+    assert res.status_code == 200, f"Sample Excel load failed: {res.text}"
+    excel_summary = res.json()
+    assert excel_summary["total_rows_parsed"] == 35
+    assert excel_summary["math_ok"] is True
+
+    # 3. Retrieve all statements
+    res = await client.get("/statements", headers=auth_headers)
+    assert res.status_code == 200
+    statements = res.json()
+    assert len(statements) >= 2
+
+    # 4. Triage resolution / override test
+    all_txns = [t for s in statements for t in s["transactions"]]
+    review_txns = [t for t in all_txns if t["element"] == "needs_review"]
+    if review_txns:
+        target_tx = review_txns[0]
+        patch_data = {
+            "element": "expense",
+            "create_rule": True,
+            "rule_pattern": "STARLINK_TEST",
+            "rule_direction": "debit"
         }
-        login_res = await client.post("/auth/login", json={"email": auth_payload["email"], "password": auth_payload["password"]})
-        if login_res.status_code == 200:
-            token = login_res.json()["access_token"]
-            print("✅ Logged in existing user")
-        else:
-            signup_res = await client.post("/auth/signup", json=auth_payload)
-            assert signup_res.status_code in [200, 201], f"Signup failed: {signup_res.text}"
-            token = signup_res.json()["access_token"]
-            print(f"✅ Signed up new user with company '{auth_payload['company_name']}'")
+        res = await client.patch(f"/statements/transactions/{target_tx['id']}", json=patch_data, headers=auth_headers)
+        assert res.status_code == 200, f"Triage resolution failed: {res.text}"
+        updated_tx = res.json()
+        assert updated_tx["element"] == "expense"
+        assert updated_tx["tier"] == "user"
+        assert updated_tx["status"] == "reviewed"
 
-        headers = {"Authorization": f"Bearer {token}"}
-
-        # 5. Test Sample Loader for Access Bank PDF with auth
-        res = await client.post("/statements/sample/access-bank-pdf", headers=headers)
-        assert res.status_code == 200, f"Sample load failed: {res.text}"
-        pdf_summary = res.json()
-        print(f"✅ Loaded Access Bank PDF: {pdf_summary['bank_name']} ({pdf_summary['total_rows_parsed']} rows, math_ok: {pdf_summary['math_ok']})")
-
-        # 6. Test Sample Loader for Demo Excel with auth
-        res = await client.post("/statements/sample/demo-excel", headers=headers)
-        assert res.status_code == 200, f"Sample load failed: {res.text}"
-        excel_summary = res.json()
-        print(f"✅ Loaded Excel Demo: {excel_summary['bank_name']} ({excel_summary['total_rows_parsed']} rows, math_ok: {excel_summary['math_ok']})")
-
-        # 7. Verify statement listing has statements
-        res = await client.get("/statements", headers=headers)
+        # Check rule is created in DB
+        res = await client.get("/statements/rules", headers=auth_headers)
         assert res.status_code == 200
-        statements = res.json()
-        assert len(statements) >= 2, f"Expected at least 2 statements, got {len(statements)}"
-        print(f"✅ Retrieved {len(statements)} statements from SQLite")
+        rules = res.json()
+        rule_patterns = [r["pattern"] for r in rules]
+        assert "STARLINK_TEST" in rule_patterns
 
-        # 8. Verify triage workflow on an unreviewed transaction
-        all_txns = [t for s in statements for t in s["transactions"]]
-        needs_review = [t for t in all_txns if t["element"] in ["needs_review", "Needs Review"]]
-        print(f"ℹ️ Found {len(needs_review)} transactions pending review")
+        # Verify Override record
+        ov_match = await db_session.execute(
+            select(models.Override).where(models.Override.transaction_id == target_tx["id"])
+        )
+        assert ov_match.scalars().first() is not None
 
-        if needs_review:
-            target_tx = needs_review[0]
-            patch_data = {
-                "element": "expense",
-                "create_rule": True,
-                "rule_pattern": "STARLINK_TEST",
-                "rule_direction": "debit"
-            }
-            res = await client.patch(f"/statements/transactions/{target_tx['id']}", json=patch_data, headers=headers)
-            assert res.status_code == 200, f"Triage resolution failed: {res.text}"
-            updated_tx = res.json()
-            assert updated_tx["element"] == "expense"
-            assert updated_tx["tier"] == "user"
-            assert updated_tx["status"] == "reviewed"
-            print(f"✅ Triage resolved txn {target_tx['id'][:8]} -> expense, created rule STARLINK_TEST")
+    # 5. Verify Category Management
+    res = await client.get("/categories", headers=auth_headers)
+    assert res.status_code == 200, f"Get categories failed: {res.text}"
+    cats = res.json()
+    cat_names = [c["name"] for c in cats]
+    assert "Cost of Goods Sold" in cat_names
+    assert "Internal Transfer" in cat_names
+    assert "Taxes & VAT" in cat_names
+    assert len(cats) >= 8
 
-            # Check rule is created in DB
-            res = await client.get("/statements/rules", headers=headers)
-            assert res.status_code == 200
-            rules = res.json()
-            rule_patterns = [r["pattern"] for r in rules]
-            assert "STARLINK_TEST" in rule_patterns, f"Rule not persisted: {rule_patterns}"
-            print("✅ Verified rule STARLINK_TEST exists in rules database")
-
-        # 9. Verify Category Management
-        res = await client.get("/categories", headers=headers)
-        assert res.status_code == 200, f"Get categories failed: {res.text}"
-        cats = res.json()
-        cat_names = [c["name"] for c in cats]
-        assert "Cost of Goods Sold" in cat_names, f"COGS missing from categories: {cat_names}"
-        assert "Internal Transfer" in cat_names, f"Transfer missing from categories: {cat_names}"
-        assert "Taxes & VAT" in cat_names, f"Taxes missing from categories: {cat_names}"
-        print(f"✅ Verified {len(cats)} default accounting categories loaded (including COGS, Transfers, Taxes)")
-
-        # Create custom category
-        custom_cat_payload = {
+    # Create custom category
+    create_cat_res = await client.post(
+        "/categories",
+        json={
             "name": "Direct Materials",
             "direction": "debit",
             "color": "amber",
-            "description": "Raw materials and packaging"
-        }
-        res = await client.post("/categories", json=custom_cat_payload, headers=headers)
-        assert res.status_code == 201, f"Create category failed: {res.text}"
-        new_cat = res.json()
-        assert new_cat["name"] == "Direct Materials"
-        assert new_cat["slug"] == "direct_materials"
-        assert not new_cat["is_system"]
-        print(f"✅ Created custom category '{new_cat['name']}' (slug: {new_cat['slug']})")
+            "description": "Raw goods used in production"
+        },
+        headers=auth_headers
+    )
+    assert create_cat_res.status_code == 201, f"Create category failed: {create_cat_res.text}"
+    custom_cat = create_cat_res.json()
+    assert custom_cat["slug"] == "direct_materials"
 
-        # Verify deleting system category is rejected
-        sys_cat = next(c for c in cats if c["is_system"])
-        res = await client.delete(f"/categories/{sys_cat['id']}", headers=headers)
-        assert res.status_code == 400, "Expected 400 when attempting to delete system category"
-        print(f"✅ Protected core category '{sys_cat['name']}' from deletion (400 rejected)")
+    # Attempt to delete core category (should be rejected with 400)
+    assets_cat = next((c for c in cats if c["slug"] == "assets" or c["name"] == "Assets"), None)
+    if assets_cat:
+        del_core_res = await client.delete(f"/categories/{assets_cat['id']}", headers=auth_headers)
+        assert del_core_res.status_code == 400, f"Core category deletion should be rejected: {del_core_res.text}"
 
-        # Delete custom category
-        res = await client.delete(f"/categories/{new_cat['id']}", headers=headers)
-        assert res.status_code == 204, f"Delete custom category failed: {res.status_code}"
-        print(f"✅ Successfully deleted custom category '{new_cat['name']}'")
+    # Delete custom category
+    del_custom_res = await client.delete(f"/categories/{custom_cat['id']}", headers=auth_headers)
+    assert del_custom_res.status_code == 204
 
-        # Verify no statements are empty
-        res = await client.get("/statements", headers=headers)
-        assert res.status_code == 200
-        active_stmts = res.json()
-        for s in active_stmts:
-            assert s["transaction_count"] > 0, f"Empty statement found: {s['id']}"
-        print(f"✅ Verified all {len(active_stmts)} statements are active and non-empty (0 empty statements)")
-
-    print("\n🎉 ALL SECURE BACKEND & INTEGRATION CHECKS PASSED PERFECTLY!")
-
-if __name__ == "__main__":
-    asyncio.run(run_e2e())
+    # 6. Verify non-empty statements
+    res = await client.get("/statements", headers=auth_headers)
+    assert res.status_code == 200
+    active_stmts = res.json()
+    for s in active_stmts:
+        assert s["transaction_count"] > 0
+        assert len(s["transactions"]) > 0

@@ -7,6 +7,7 @@ from database import get_db
 from models import Rule, User
 from utils import get_current_user
 from schemas import RuleCreateRequest, RuleResponse
+from pipeline.rules import seed_default_rules
 
 router = APIRouter(prefix="/rules", tags=["rules"])
 
@@ -17,6 +18,7 @@ async def list_rules(
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve all persistent classification rules ordered by priority."""
+    await seed_default_rules(db)
     result = await db.execute(select(Rule).order_by(Rule.priority.desc(), Rule.hit_count.desc()))
     return result.scalars().all()
 

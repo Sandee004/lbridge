@@ -247,7 +247,10 @@ def parse_excel_or_csv_statement(
         })
 
     if not raw_txns:
-        raise ValueError("No transaction records found under the table header.")
+        raise ValueError(
+            "No transactions could be parsed from this Excel/CSV statement. "
+            "Please ensure it contains a recognizable transaction table with dates, descriptions, and amounts."
+        )
 
     # -------------------------------------------------------------
     # 4. Arithmetic Verification
@@ -255,13 +258,20 @@ def parse_excel_or_csv_statement(
     first_txn = raw_txns[0]
     last_txn = raw_txns[-1]
 
-    opening_balance = Decimal("0.00")
-    if first_txn["balance"] != Decimal("0.00"):
+    opening_balance = opening_balance_hdr
+    if opening_balance is None and first_txn["balance"] != Decimal("0.00"):
         opening_balance = first_txn["balance"] + first_txn["debit"] - first_txn["credit"]
 
-    closing_balance = Decimal("0.00")
-    if last_txn["balance"] != Decimal("0.00"):
+    closing_balance = closing_balance_hdr
+    if closing_balance is None and last_txn["balance"] != Decimal("0.00"):
         closing_balance = last_txn["balance"]
+
+    balances_found = (opening_balance is not None and closing_balance is not None)
+
+    if opening_balance is None:
+        opening_balance = Decimal("0.00")
+    if closing_balance is None:
+        closing_balance = Decimal("0.00")
 
     running_calc = opening_balance
     calc_total_credits = Decimal("0.00")
@@ -269,28 +279,32 @@ def parse_excel_or_csv_statement(
     math_ok = True
     math_error_detail: Optional[str] = None
 
-    for r_idx, txn in enumerate(raw_txns):
-        calc_total_credits += txn["credit"]
-        calc_total_debits += txn["debit"]
-        running_calc = running_calc - txn["debit"] + txn["credit"]
+    if not balances_found:
+        math_ok = False
+        math_error_detail = "Could not verify: balances not found"
+    else:
+        for r_idx, txn in enumerate(raw_txns):
+            calc_total_credits += txn["credit"]
+            calc_total_debits += txn["debit"]
+            running_calc = running_calc - txn["debit"] + txn["credit"]
 
-        if txn["balance"] != Decimal("0.00"):
-            diff = abs(running_calc - txn["balance"])
-            if diff > Decimal("0.01"):
+            if txn["balance"] != Decimal("0.00"):
+                diff = abs(running_calc - txn["balance"])
+                if diff > Decimal("0.01"):
+                    math_ok = False
+                    math_error_detail = (
+                        f"Arithmetic discrepancy at row {r_idx + 1} ({txn['date']} - {txn['description_raw'][:30]}): "
+                        f"expected balance was {running_calc:,.2f}, but sheet shows {txn['balance']:,.2f}."
+                    )
+                    break
+
+        if math_ok and closing_balance != Decimal("0.00"):
+            diff_close = abs(running_calc - closing_balance)
+            if diff_close > Decimal("0.01"):
                 math_ok = False
                 math_error_detail = (
-                    f"Arithmetic discrepancy at row {r_idx + 1} ({txn['date']} - {txn['description_raw'][:30]}): "
-                    f"expected balance was {running_calc:,.2f}, but sheet shows {txn['balance']:,.2f}."
+                    f"Closing balance mismatch: computed final is {running_calc:,.2f}, but sheet indicates {closing_balance:,.2f}."
                 )
-                break
-
-    if math_ok and closing_balance != Decimal("0.00"):
-        diff_close = abs(running_calc - closing_balance)
-        if diff_close > Decimal("0.01"):
-            math_ok = False
-            math_error_detail = (
-                f"Closing balance mismatch: computed final is {running_calc:,.2f}, but sheet indicates {closing_balance:,.2f}."
-            )
 
     processed_transactions = []
     for txn in raw_txns:
