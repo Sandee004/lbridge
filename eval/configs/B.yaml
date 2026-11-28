@@ -1,0 +1,8 @@
+id: B
+name: LLM only (Zero-shot without rules)
+use_rules: false
+use_llm: true
+few_shot: false
+validators: false
+confidence_threshold: 0.0
+capitalization_threshold: 500000.0

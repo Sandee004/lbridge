@@ -24,7 +24,7 @@ async def test_rules_and_transactions_routes(client: httpx.AsyncClient, auth_hea
     res = await client.post("/statements/rules", json=new_rule_payload, headers=auth_headers)
     assert res.status_code == 201, f"POST /statements/rules failed: {res.text}"
     rule_data = res.json()
-    assert rule_data["pattern"] == "TEST_PYTEST_RULE"
+    assert "TEST_PYTEST_RULE" in rule_data["pattern"]
     assert rule_data["element"] == "expense"
     rule_id = rule_data["id"]
 

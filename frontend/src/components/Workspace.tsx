@@ -96,10 +96,6 @@ export const Workspace: React.FC = () => {
 
   const fetchStatementsAPI = async (): Promise<BackendStatement[]> => {
     const res = await fetch(`${BASE_URL}/statements`, { credentials: 'include' });
-    if (res.status === 401) {
-      navigate('/login');
-      throw new Error('UNAUTHORIZED');
-    }
     if (!res.ok) throw new Error('Failed to load statements');
     const data: BackendStatement[] = await res.json();
     return data.map((s) => ({
@@ -571,6 +567,7 @@ export const Workspace: React.FC = () => {
           isUploading={isUploading}
           transactions={allTransactions}
           activeStatementName={activeStatement?.bank_name}
+          activeStatementId={activeStatement?.id}
         />
 
         {/* UPLOADING FEEDBACK STRIP */}

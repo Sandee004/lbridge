@@ -9,9 +9,9 @@ SEED_RULES = [
     # -------------------------------------------------------------
     # 1. EXPENSES (Debits only)
     # -------------------------------------------------------------
-    # Bank Charges, Taxes & Levies
+    # Bank Charges & Levies (excluding statutory taxes/stamp duty)
     {
-        "pattern": r"\b(sms alert|stamp duty|maintenance fee|card fee|token renewal|commission mobile trf|vat mobile trf|cot|bank charge|fgn stamp duty)\b",
+        "pattern": r"\b(sms alert|maintenance fee|card fee|token renewal|commission mobile trf|vat mobile trf|bank charge|commission on turnover)\b",
         "match_type": "word_regex",
         "direction": "debit",
         "element": "expense",
@@ -19,7 +19,7 @@ SEED_RULES = [
     },
     # Internet & Telecommunications
     {
-        "pattern": r"\b(spectranet|mtn|airtel|glo|9mobile|starlink|smile communications|fiber broadband|internet)\b",
+        "pattern": r"\b(spectranet|mtn|airtel|9mobile|starlink|smile communications|fiber broadband|glo mobile|glo data)\b",
         "match_type": "word_regex",
         "direction": "debit",
         "element": "expense",
@@ -51,7 +51,7 @@ SEED_RULES = [
     },
     # Food, Groceries & Office Consumables
     {
-        "pattern": r"\b(shoprite|choppies|just rite|spar|foodco|the place|mega chicken|dominos|mr biggs|kfc|staples|stationery|office cleaning)\b",
+        "pattern": r"\b(shoprite|choppies|just rite|spar supermarket|foodco|the place|mega chicken|dominos|mr biggs|kfc|staples|stationery|office cleaning)\b",
         "match_type": "word_regex",
         "direction": "debit",
         "element": "expense",
@@ -71,7 +71,7 @@ SEED_RULES = [
     },
     # Client Payments & Revenues
     {
-        "pattern": r"\b(consulting fee|retainer|client payment|oct invoice|nov invoice|dec invoice|sales proceeds|services rendered)\b",
+        "pattern": r"\b(consulting fee|retainer|client payment|invoice|sales proceeds|services rendered)\b",
         "match_type": "word_regex",
         "direction": "credit",
         "element": "income",
@@ -88,9 +88,10 @@ SEED_RULES = [
 
     # -------------------------------------------------------------
     # 3. ASSETS (Debits only - Long-term property & equipment)
+    # Note: 'slot systems' removed because it also sells routine repairs/peripherals; specific equipment terms kept
     # -------------------------------------------------------------
     {
-        "pattern": r"\b(slot systems|hp laptop|macbook pro|apple store|dell computers|office furniture|desks|office copier|equipment lease|plant and machinery)\b",
+        "pattern": r"\b(hp laptop|macbook pro|apple store|dell computers|office furniture|desks|office copier|equipment lease|plant and machinery)\b",
         "match_type": "word_regex",
         "direction": "debit",
         "element": "asset",
@@ -141,7 +142,7 @@ SEED_RULES = [
     # 7. INTERNAL TRANSFERS (Any direction)
     # -------------------------------------------------------------
     {
-        "pattern": r"\b(internal trf|own account trf|transfer between accounts|inter-account|sweep|petty cash)\b",
+        "pattern": r"\b(internal trf|own account trf|transfer between accounts|inter-account|auto-sweep|account sweep|petty cash)\b",
         "match_type": "word_regex",
         "direction": "any",
         "element": "transfer",
@@ -150,9 +151,10 @@ SEED_RULES = [
 
     # -------------------------------------------------------------
     # 8. TAXES & VAT (Debits only)
+    # Note: fgn stamp duty lives exclusively here as a statutory government tax remittance
     # -------------------------------------------------------------
     {
-        "pattern": r"\b(firs|fgn stamp duty|value added tax|wht remittance|tax authority|withholding tax|customs duty)\b",
+        "pattern": r"\b(firs|fgn stamp duty|stamp duty|value added tax|wht remittance|tax authority|withholding tax|customs duty)\b",
         "match_type": "word_regex",
         "direction": "debit",
         "element": "taxes",

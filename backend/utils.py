@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -20,7 +21,25 @@ security = HTTPBearer(
     auto_error=False,
 )
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "pinghook-secret-key-change-in-production-2026"))
+# P3.3: Read one JWT_SECRET setting; if unset, generate random secret outside repo
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    secret_cache_path = os.path.expanduser("~/.ledgerbridge_jwt_secret")
+    if os.path.exists(secret_cache_path):
+        try:
+            with open(secret_cache_path, "r", encoding="utf-8") as f:
+                JWT_SECRET = f.read().strip()
+        except OSError:
+            JWT_SECRET = secrets.token_hex(32)
+    else:
+        JWT_SECRET = secrets.token_hex(32)
+        try:
+            with open(secret_cache_path, "w", encoding="utf-8") as f:
+                f.write(JWT_SECRET)
+        except OSError:
+            pass
+
+SECRET_KEY = JWT_SECRET
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
@@ -59,33 +78,34 @@ async def get_current_user(
     elif request and request.cookies.get("access_token"):
         token = request.cookies.get("access_token")
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication credentials were not provided",
-            headers={"WWW-Authenticate": "Bearer"},
+    async def _get_default_local_user() -> User:
+        result = await db.execute(select(User).limit(1))
+        local_user = result.scalars().first()
+        if local_user:
+            return local_user
+        return User(
+            id="local-user",
+            email="finance@company.com",
+            username="finance",
+            company_name="Access Capital Ltd",
+            password="",
         )
+
+    # P3.4 Option A: Single-user local mode. If no token, invalid token, or expired session,
+    # automatically authenticate to the local user so the app works seamlessly offline without 401s.
+    if not token:
+        return await _get_default_local_user()
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id_raw: Optional[str] = payload.get("sub")
         if not user_id_raw:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
+            return await _get_default_local_user()
         user_id = str(user_id_raw)
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if user is None:
+            return await _get_default_local_user()
+        return user
     except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalars().first()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-    return user
+        return await _get_default_local_user()

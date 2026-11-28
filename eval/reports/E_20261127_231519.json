@@ -1,0 +1,585 @@
+{
+  "metadata": {
+    "config_id": "E",
+    "config_name": "Full system (Rules + LLM + Few-shot + Validators + Threshold)",
+    "timestamp": "20261127_231519",
+    "dataset": "test.jsonl",
+    "model_name": "qwen2.5-coder:1.5b",
+    "prompt_hash": "d0ff5974",
+    "ruleset_hash": "3cbc87c7"
+  },
+  "metrics": {
+    "total_rows": 21,
+    "auto_accepted_count": 9,
+    "reviewed_count": 12,
+    "coverage_by_tier": {
+      "llm": 66.67,
+      "rule": 28.57,
+      "validator": 4.76
+    },
+    "needs_review_rate": 57.14,
+    "auto_accept_error_rate": 0.0,
+    "per_tier_accuracy": {
+      "llm": 100.0,
+      "rule": 100.0
+    },
+    "review_precision": 83.33,
+    "error_capture": 100.0,
+    "macro_f1": 65.37,
+    "per_element_metrics": {
+      "asset": {
+        "precision": 100.0,
+        "recall": 100.0,
+        "f1": 100.0,
+        "support": 1
+      },
+      "liability": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 0
+      },
+      "income": {
+        "precision": 100.0,
+        "recall": 50.0,
+        "f1": 66.67,
+        "support": 2
+      },
+      "expense": {
+        "precision": 100.0,
+        "recall": 83.33,
+        "f1": 90.91,
+        "support": 6
+      },
+      "capital": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 1
+      },
+      "cogs": {
+        "precision": 100.0,
+        "recall": 100.0,
+        "f1": 100.0,
+        "support": 1
+      },
+      "transfer": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 5
+      },
+      "taxes": {
+        "precision": 100.0,
+        "recall": 100.0,
+        "f1": 100.0,
+        "support": 1
+      }
+    },
+    "confusion_matrix": {
+      "asset": {
+        "asset": 1,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 0
+      },
+      "liability": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 0
+      },
+      "income": {
+        "asset": 0,
+        "liability": 0,
+        "income": 1,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 1
+      },
+      "expense": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 5,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 1
+      },
+      "capital": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 1
+      },
+      "cogs": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 1,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 0
+      },
+      "transfer": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 5
+      },
+      "taxes": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 1,
+        "needs_review": 0
+      },
+      "needs_review": {
+        "asset": 0,
+        "liability": 0,
+        "income": 0,
+        "expense": 0,
+        "capital": 0,
+        "cogs": 0,
+        "transfer": 0,
+        "taxes": 0,
+        "needs_review": 4
+      }
+    },
+    "matrix_labels": [
+      "asset",
+      "liability",
+      "income",
+      "expense",
+      "capital",
+      "cogs",
+      "transfer",
+      "taxes",
+      "needs_review"
+    ],
+    "rows_per_second": 29088.63,
+    "elapsed_seconds": 0.001
+  },
+  "results": [
+    {
+      "statement_id": "stmt-03",
+      "date": "16/11/2026",
+      "description_raw": "SUPPLIER REFUND OVERPAYMENT INFLOW",
+      "description_norm": "supplier refund overpayment inflow",
+      "amount": 75000.0,
+      "direction": "credit",
+      "gold_element": "transfer",
+      "acceptable_alternates": [
+        "income",
+        "needs_review"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "income",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "17/11/2026",
+      "description_raw": "SALES PROCEEDS REVERSAL CHARGEBACK",
+      "description_norm": "sales proceeds reversal chargeback",
+      "amount": 150000.0,
+      "direction": "debit",
+      "gold_element": "income",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "18/11/2026",
+      "description_raw": "NIP/TRF/CHINEDU OKAFOR/PAYMENT",
+      "description_norm": "nip trf chinedu okafor payment",
+      "amount": 85000.0,
+      "direction": "debit",
+      "gold_element": "needs_review",
+      "acceptable_alternates": [
+        "expense",
+        "transfer"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "19/11/2026",
+      "description_raw": "MOBILE TRF TO PPL /SANDRA TOMSIN",
+      "description_norm": "mobile trf to ppl sandra tomsin",
+      "amount": 25000.0,
+      "direction": "debit",
+      "gold_element": "needs_review",
+      "acceptable_alternates": [
+        "expense",
+        "transfer"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "needs_review",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.4,
+      "reason": "Confidence 0.40 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "20/11/2026",
+      "description_raw": "TRF/FRM/0029103994/REF88219 UNKNOWN",
+      "description_norm": "trf frm 0029103994 ref88219 unknown",
+      "amount": 50000.0,
+      "direction": "credit",
+      "gold_element": "needs_review",
+      "acceptable_alternates": [
+        "income",
+        "transfer"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "needs_review",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.4,
+      "reason": "Confidence 0.40 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "21/11/2026",
+      "description_raw": "TRANSFER TO PERSONAL SAVINGS ACCOUNT",
+      "description_norm": "transfer to personal savings account",
+      "amount": 200000.0,
+      "direction": "debit",
+      "gold_element": "transfer",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "22/11/2026",
+      "description_raw": "INTER-BANK SWEEP TO GTB CURRENT",
+      "description_norm": "inter bank sweep to gtb current",
+      "amount": 500000.0,
+      "direction": "debit",
+      "gold_element": "transfer",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-03",
+      "date": "23/11/2026",
+      "description_raw": "OWN-ACCOUNT LIQUIDITY TRANSFER",
+      "description_norm": "own account liquidity transfer",
+      "amount": 1000000.0,
+      "direction": "credit",
+      "gold_element": "transfer",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "income",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "01/12/2026",
+      "description_raw": "SPECTRANET FIBER INTERNET LAGOS HQ",
+      "description_norm": "spectranet fiber internet lagos hq",
+      "amount": 24500.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "expense",
+      "tier": "rule",
+      "rule_id": 2,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #2 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "02/12/2026",
+      "description_raw": "IKEDC PREPAID POWER RECHARGE METER #99281",
+      "description_norm": "ikedc prepaid power recharge meter 99281",
+      "amount": 40000.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "expense",
+      "tier": "rule",
+      "rule_id": 3,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #3 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "03/12/2026",
+      "description_raw": "AWS EMEA AMAZON CLOUD INFRASTRUCTURE",
+      "description_norm": "aws emea amazon cloud infrastructure",
+      "amount": 185000.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "expense",
+      "tier": "rule",
+      "rule_id": 5,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #5 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "04/12/2026",
+      "description_raw": "TOTALENERGIES STATION GENERATOR FUEL",
+      "description_norm": "totalenergies station generator fuel",
+      "amount": 92000.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "expense",
+      "tier": "rule",
+      "rule_id": 4,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #4 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "05/12/2026",
+      "description_raw": "FEDERAL GOVERNMENT STAMP DUTY CHARGE",
+      "description_norm": "federal government stamp duty charge",
+      "amount": 50.0,
+      "direction": "debit",
+      "gold_element": "taxes",
+      "acceptable_alternates": [
+        "expense"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "taxes",
+      "predicted_element": "taxes",
+      "tier": "rule",
+      "rule_id": 16,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #16 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "06/12/2026",
+      "description_raw": "CONSULTING FEE CLIENT PAYMENT TECH CORP",
+      "description_norm": "consulting fee client payment tech corp",
+      "amount": 950000.0,
+      "direction": "credit",
+      "gold_element": "income",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "income",
+      "predicted_element": "income",
+      "tier": "rule",
+      "rule_id": 8,
+      "confidence": 1.0,
+      "reason": "Tier-1 rule #8 match"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "07/12/2026",
+      "description_raw": "DIRECTOR EQUITY CONTRIBUTION FOUNDER",
+      "description_norm": "director equity contribution founder",
+      "amount": 2000000.0,
+      "direction": "credit",
+      "gold_element": "capital",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "capital",
+      "predicted_element": "needs_review",
+      "tier": "validator",
+      "rule_id": 12,
+      "confidence": 0.0,
+      "reason": "Guardrail: Capital entry requires a configured owner name match (Original prediction: capital via rule)"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "08/12/2026",
+      "description_raw": "COMMERCIAL TRUCK HAULAGE LOGISTICS",
+      "description_norm": "commercial truck haulage logistics",
+      "amount": 55000.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [
+        "cogs"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "expense",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.91,
+      "reason": "Commercial transport logistics expense"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "09/12/2026",
+      "description_raw": "PACKAGING FOIL & WRAPPING ROLLS BULK",
+      "description_norm": "packaging foil wrapping rolls bulk",
+      "amount": 68000.0,
+      "direction": "debit",
+      "gold_element": "cogs",
+      "acceptable_alternates": [
+        "expense"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "cogs",
+      "predicted_element": "cogs",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.91,
+      "reason": "Bulk product packaging supplies"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "10/12/2026",
+      "description_raw": "INDUSTRIAL INJECTION MOLDING MACHINE",
+      "description_norm": "industrial injection molding machine",
+      "amount": 4200000.0,
+      "direction": "debit",
+      "gold_element": "asset",
+      "acceptable_alternates": [],
+      "should_review": false,
+      "raw_predicted_element": "asset",
+      "predicted_element": "asset",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.98,
+      "reason": "Industrial manufacturing machine asset"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "11/12/2026",
+      "description_raw": "OFFICE SWIVEL CHAIRS 2 UNITS",
+      "description_norm": "office swivel chairs 2 units",
+      "amount": 78000.0,
+      "direction": "debit",
+      "gold_element": "expense",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "12/12/2026",
+      "description_raw": "NIP/TRF/UNKNOWN VENDOR PAYMENT",
+      "description_norm": "nip trf unknown vendor payment",
+      "amount": 45000.0,
+      "direction": "debit",
+      "gold_element": "needs_review",
+      "acceptable_alternates": [
+        "expense"
+      ],
+      "should_review": true,
+      "raw_predicted_element": "needs_review",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.4,
+      "reason": "Confidence 0.40 below threshold 0.75"
+    },
+    {
+      "statement_id": "stmt-04",
+      "date": "13/12/2026",
+      "description_raw": "INTERNAL SWEEP TRANSFER ACCESS TO ZENITH",
+      "description_norm": "internal sweep transfer access to zenith",
+      "amount": 750000.0,
+      "direction": "debit",
+      "gold_element": "transfer",
+      "acceptable_alternates": [
+        "needs_review"
+      ],
+      "should_review": false,
+      "raw_predicted_element": "expense",
+      "predicted_element": "needs_review",
+      "tier": "llm",
+      "rule_id": null,
+      "confidence": 0.65,
+      "reason": "Confidence 0.65 below threshold 0.75"
+    }
+  ]
+}

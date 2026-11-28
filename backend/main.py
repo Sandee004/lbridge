@@ -13,9 +13,8 @@ import models
 from routers import auth, categories, rules, statements, transactions, ingester
 load_dotenv()
 
-# Build frontend automatically if outdated and not in production deploy override
-if os.getenv("RENDER", "false").lower() != "true":
-    build_frontend()
+# Build frontend automatically if outdated
+build_frontend()
 
 
 @asynccontextmanager
@@ -47,7 +46,6 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
-        "https://*.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -102,4 +100,4 @@ async def serve_react(full_path: str):
         "detail": "API online. Connect your frontend client or view /docs.",
     }
 
-# To run: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# To run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload

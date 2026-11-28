@@ -1,7 +1,6 @@
 import React from 'react';
 import { ChevronDown, Download, Settings, UploadCloud } from 'lucide-react';
 import type { BackendTransaction, WorkspacePage } from '../types';
-import { normalizeElement } from '../types';
 
 interface HeaderProps {
   currentPage: WorkspacePage;
@@ -10,51 +9,56 @@ interface HeaderProps {
   isUploading: boolean;
   transactions: BackendTransaction[];
   activeStatementName?: string;
+  activeStatementId?: string;
 }
 
-function exportTransactionsCSV(
-  transactions: BackendTransaction[],
-  mode: 'flat' | 'journal',
-  filenamePrefix: string = 'ledgerbridge'
-): void {
-  const csvRows: string[] = [];
-
-  if (mode === 'flat') {
-    csvRows.push('ID,Date,Value_Date,Narration,Direction,Amount,Element,Tier,Confidence,Status');
-    transactions.forEach((t) => {
-      const cleanDesc = (t.description_raw || '').replace(/"/g, '""');
-      const elem = normalizeElement(t.element);
-      csvRows.push(
-        `"${t.id}","${t.date}","${t.value_date || t.date}","${cleanDesc}","${t.direction}",${t.amount},"${elem}","${t.tier || 'auto'}",${t.confidence ?? 1.0},"${t.status || 'auto'}"`
-      );
-    });
-  } else {
-    // Balanced Double-Entry Journal for Accounting software (Zoho Books, QuickBooks format)
-    csvRows.push('Journal_Date,Journal_Number,Account_Name,Debit,Credit,Description');
-    transactions.forEach((t) => {
-      const cleanDesc = (t.description_raw || '').replace(/"/g, '""');
-      const elem = normalizeElement(t.element);
-      const jrnId = `JRN-${t.id.slice(0, 8).toUpperCase()}`;
-
-      if (t.direction === 'credit') {
-        csvRows.push(`"${t.date}","${jrnId}","Bank Account",${t.amount},0,"${cleanDesc}"`);
-        csvRows.push(`"${t.date}","${jrnId}","${elem}",0,${t.amount},"${cleanDesc}"`);
-      } else {
-        csvRows.push(`"${t.date}","${jrnId}","${elem}",${t.amount},0,"${cleanDesc}"`);
-        csvRows.push(`"${t.date}","${jrnId}","Bank Account",0,${t.amount},"${cleanDesc}"`);
-      }
-    });
+async function handleBackendExport(
+  activeStatementId: string | undefined,
+  format: 'csv' | 'xlsx',
+  mode: 'flat' | 'journal' = 'flat'
+): Promise<void> {
+  if (!activeStatementId) {
+    alert('Please select or upload a statement first.');
+    return;
+  }
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${filenamePrefix}_${mode === 'flat' ? 'clean_ledger' : 'double_entry_journal'}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  try {
+    const res = await fetch(`/statements/${activeStatementId}/export?format=${format}&mode=${mode}`, {
+      headers,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Export failed' }));
+      alert(err.detail || 'Failed to export statement.');
+      return;
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition');
+    let filename = `ledgerbridge_export.${format}`;
+    if (disposition && disposition.includes('filename=')) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('Export error:', err);
+    alert('An error occurred during export.');
+  }
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -64,6 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
   isUploading,
   transactions,
   activeStatementName,
+  activeStatementId,
 }) => {
   const getPageInfo = (): { title: string; subtitle: string } => {
     switch (currentPage) {
@@ -116,20 +121,27 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Export</span>
             <ChevronDown className="h-3 w-3 text-slate-400" />
           </button>
-          <div className="absolute right-0 top-full mt-1 hidden w-52 rounded-xl border border-slate-200 bg-white p-1 shadow-lg group-hover:block z-50">
+          <div className="absolute right-0 top-full mt-1 hidden w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-lg group-hover:block z-50">
             <button
-              onClick={() => exportTransactionsCSV(transactions, 'flat')}
+              onClick={() => handleBackendExport(activeStatementId, 'csv', 'flat')}
               className="w-full text-left rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 hover:text-emerald-700"
             >
               <p className="font-semibold">Clean Ledger (.CSV)</p>
-              <p className="text-[10px] text-slate-400">Standard spreadsheet format</p>
+              <p className="text-[10px] text-slate-400">Standard spreadsheet register</p>
             </button>
             <button
-              onClick={() => exportTransactionsCSV(transactions, 'journal')}
+              onClick={() => handleBackendExport(activeStatementId, 'csv', 'journal')}
               className="w-full text-left rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 hover:text-emerald-700"
             >
               <p className="font-semibold">Double-Entry Journal (.CSV)</p>
               <p className="text-[10px] text-slate-400">Zoho Books & QuickBooks format</p>
+            </button>
+            <button
+              onClick={() => handleBackendExport(activeStatementId, 'xlsx')}
+              className="w-full text-left rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 hover:text-emerald-700"
+            >
+              <p className="font-semibold">Excel Audit Workbook (.XLSX)</p>
+              <p className="text-[10px] text-slate-400">3 sheets with live SUMIFS formulas</p>
             </button>
           </div>
         </div>

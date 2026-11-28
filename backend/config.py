@@ -13,6 +13,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "6"))
 CAPITALIZATION_THRESHOLD = float(os.getenv("CAPITALIZATION_THRESHOLD", "500000.0"))  # ₦500,000 threshold for Assets
+OWNER_NAMES = [name.strip().lower() for name in os.getenv("OWNER_NAMES", "").split(",") if name.strip()]
 
 # ------------------------------
 # Frontend build configuration
@@ -65,6 +66,5 @@ def build_frontend():
 # ------------------------------
 # Auth and Security Configuration
 # ------------------------------
-SECRET_KEY = os.getenv("JWT_SECRET", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days

@@ -1,7 +1,7 @@
 import hashlib
 import os
 from typing import List
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,6 +11,7 @@ from models import Statement, Transaction, User
 from utils import get_current_user
 from parser import parse_pdf_statement, parse_excel_or_csv_statement
 from pipeline import run_classification_pipeline
+from pipeline.export import export_flat_csv, export_journal_csv, export_excel_workbook
 from schemas import StatementResponse, UploadSummaryResponse
 
 router = APIRouter(tags=["statements"])
@@ -82,24 +83,72 @@ async def process_statement_bytes(content: bytes, filename: str, db: AsyncSessio
     db.add(statement)
     await db.flush()
 
-    # 2. Run Classification Pipeline (Tier 1: Rules -> Tier 2: Ollama Qwen -> Guardrails)
     raw_txns = parsed_data.get("transactions", [])
-    classified_txns = await run_classification_pipeline(raw_txns, db)
 
-    # 3. Deduplicate transactions by SHA-256 fingerprint & persist
+    # P2.5: Deduplicate within the same upload first
+    seen_fps = set()
+    unique_txns = []
+    intra_file_duplicates = 0
+    for t in raw_txns:
+        fp = t["fingerprint"]
+        if fp in seen_fps:
+            intra_file_duplicates += 1
+        else:
+            seen_fps.add(fp)
+            unique_txns.append(t)
+
+    # P2.5: Check existing fingerprints in SQLite in ONE query before running classification pipeline
+    all_fps = list(seen_fps)
+    existing_fps = set()
+    if all_fps:
+        stmt_fps = await db.execute(select(Transaction.fingerprint).where(Transaction.fingerprint.in_(all_fps)))
+        existing_fps = set(stmt_fps.scalars().all())
+
+    new_txns = [t for t in unique_txns if t["fingerprint"] not in existing_fps]
+    duplicates_skipped = intra_file_duplicates + len(existing_fps)
+
+    # If no new transactions to classify because all exist in database:
+    if not new_txns and raw_txns:
+        await db.rollback()
+        sample_fp = raw_txns[0]["fingerprint"]
+        match = await db.execute(select(Transaction.statement_id).where(Transaction.fingerprint == sample_fp))
+        s_id = match.scalars().first()
+        existing_stmt = None
+        if s_id:
+            s_res = await db.execute(select(Statement).options(selectinload(Statement.transactions)).where(Statement.id == s_id))
+            existing_stmt = s_res.scalars().first()
+
+        if existing_stmt:
+            return UploadSummaryResponse(
+                statement_id=existing_stmt.id,
+                filename=existing_stmt.filename,
+                bank_name=existing_stmt.bank_name,
+                currency=existing_stmt.currency,
+                math_ok=existing_stmt.math_ok,
+                math_error_detail=existing_stmt.math_error_detail,
+                opening_balance=existing_stmt.opening_balance,
+                closing_balance=existing_stmt.closing_balance,
+                total_credits=existing_stmt.total_credits,
+                total_debits=existing_stmt.total_debits,
+                total_rows_parsed=len(raw_txns),
+                new_rows_stored=0,
+                duplicates_skipped=duplicates_skipped,
+                rules_count=0,
+                llm_count=0,
+                needs_review_count=sum(1 for t in existing_stmt.transactions if t.element == "needs_review"),
+                message=f"All {duplicates_skipped} transactions are already present in '{existing_stmt.filename}'. Re-selected existing statement.",
+            )
+
+    # 2. Run Classification Pipeline ONLY on new, deduplicated rows (Tier 1: Rules -> Tier 2: Ollama -> Guardrails)
+    classified_txns = await run_classification_pipeline(new_txns, db)
+
+    # 3. Persist new transactions
     new_rows_stored = 0
-    duplicates_skipped = 0
     rules_count = 0
     llm_count = 0
     needs_review_count = 0
 
     for item in classified_txns:
-        fp = item["fingerprint"]
-        existing = await db.execute(select(Transaction.id).where(Transaction.fingerprint == fp))
-        if existing.scalars().first():
-            duplicates_skipped += 1
-            continue
-
         tier = item.get("tier", "ingestion")
         element = item.get("element", "needs_review")
 
@@ -113,7 +162,7 @@ async def process_statement_bytes(content: bytes, filename: str, db: AsyncSessio
 
         txn = Transaction(
             statement_id=statement.id,
-            fingerprint=fp,
+            fingerprint=item["fingerprint"],
             date=item["date"],
             value_date=item.get("value_date", item["date"]),
             amount=item["amount"],
@@ -130,39 +179,6 @@ async def process_statement_bytes(content: bytes, filename: str, db: AsyncSessio
         )
         db.add(txn)
         new_rows_stored += 1
-
-    # If no new transactions were stored because all are already in database, reselect existing
-    if new_rows_stored == 0 and parsed_data.get("transaction_count", 0) > 0:
-        await db.rollback()
-        sample_fp = classified_txns[0]["fingerprint"] if classified_txns else None
-        existing_stmt = None
-        if sample_fp:
-            match = await db.execute(select(Transaction.statement_id).where(Transaction.fingerprint == sample_fp))
-            s_id = match.scalars().first()
-            if s_id:
-                s_res = await db.execute(select(Statement).options(selectinload(Statement.transactions)).where(Statement.id == s_id))
-                existing_stmt = s_res.scalars().first()
-
-        if existing_stmt:
-            return UploadSummaryResponse(
-                statement_id=existing_stmt.id,
-                filename=existing_stmt.filename,
-                bank_name=existing_stmt.bank_name,
-                currency=existing_stmt.currency,
-                math_ok=existing_stmt.math_ok,
-                math_error_detail=existing_stmt.math_error_detail,
-                opening_balance=existing_stmt.opening_balance,
-                closing_balance=existing_stmt.closing_balance,
-                total_credits=existing_stmt.total_credits,
-                total_debits=existing_stmt.total_debits,
-                total_rows_parsed=parsed_data["transaction_count"],
-                new_rows_stored=0,
-                duplicates_skipped=duplicates_skipped,
-                rules_count=rules_count,
-                llm_count=llm_count,
-                needs_review_count=sum(1 for t in existing_stmt.transactions if t.element == "needs_review"),
-                message=f"All {duplicates_skipped} transactions are already present in '{existing_stmt.filename}'. Re-selected existing statement.",
-            )
 
     await db.commit()
     await db.refresh(statement)
@@ -292,6 +308,75 @@ async def list_statements(
             )
         )
     return response
+
+
+@router.get("/{statement_id}/export")
+async def export_statement(
+    statement_id: str,
+    format: str = "csv",
+    mode: str = "flat",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    P4.1 - P4.4: Export statement transactions as CSV (flat or journal) or XLSX.
+    """
+    fmt = format.lower()
+    if fmt not in ("csv", "xlsx"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format '{format}'. Supported formats: 'csv', 'xlsx'.",
+        )
+
+    query = (
+        select(Statement)
+        .options(selectinload(Statement.transactions))
+        .where(Statement.id == statement_id)
+    )
+    result = await db.execute(query)
+    s = result.scalars().first()
+    if not s:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Statement not found",
+        )
+
+    safe_name = s.bank_name.replace(" ", "_")
+
+    if fmt == "csv":
+        m = mode.lower()
+        if m not in ("flat", "journal"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported mode '{mode}'. Supported modes: 'flat', 'journal'.",
+            )
+        if m == "journal":
+            try:
+                content = export_journal_csv(s.transactions)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e),
+                )
+            filename = f"{safe_name}_{s.id[:8]}_journal.csv"
+        else:
+            content = export_flat_csv(s.transactions)
+            filename = f"{safe_name}_{s.id[:8]}_clean_ledger.csv"
+
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # XLSX format
+    content_bytes = export_excel_workbook(s.transactions)
+    filename = f"{safe_name}_{s.id[:8]}_audit.xlsx"
+    return Response(
+        content=content_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{statement_id}", response_model=StatementResponse)

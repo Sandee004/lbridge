@@ -57,8 +57,8 @@ async def test_pipeline_pdf_and_excel(db_session):
     stmt = await get_statement(statement_id=resp_pdf.statement_id, db=db_session)
     assert len(stmt.transactions) == 56
     for t in stmt.transactions:
-        assert t.element in ["asset", "liability", "income", "expense", "capital", "needs_review", "cogs", "internal_transfer", "taxes_vat"]
-        assert t.tier in ["rule", "llm", "user", "ingestion"]
+        assert t.element in ["asset", "liability", "income", "expense", "capital", "needs_review", "cogs", "transfer", "taxes"]
+        assert t.tier in ["rule", "llm", "user", "ingestion", "validator"]
 
 
 def test_pdf_parser_raises_on_unrecognizable_table():

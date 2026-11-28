@@ -14,7 +14,7 @@ When processing sensitive financial data like corporate bank statements, relying
 3. **Cloud Latency & Outage Vulnerability**: Financial workflows require reliable, offline-capable desktop execution without depending on external network stability or rate limits.
 
 ### The Small Language Model (SLM) Solution
-LedgerBridge demonstrates that a **quantized Small Language Model** (e.g. `qwen2.5-coder:1.5b` or `qwen2.5:3b`) running **100% locally via Ollama**, when combined with a **deterministic pre-filter** and **constrained JSON decoding**, achieves **$\ge$98% categorization accuracy** with zero cloud API costs and absolute data sovereignty.
+LedgerBridge demonstrates that a **quantized Small Language Model** (e.g. `qwen2.5-coder:1.5b` or `qwen2.5:3b`) running **100% locally via Ollama**, when combined with a **deterministic pre-filter**, **schema-constrained JSON decoding**, and **accounting guardrails**, achieves **0.0% auto-accept errors** on benchmark evaluation with zero cloud API costs and absolute data sovereignty.
 
 ---
 
@@ -126,7 +126,7 @@ Now classify the following batch of unmapped transactions:
 ```
 
 #### 3. Mini-Batching for Low Latency
-Transactions are chunked into batches of **6 to 10 rows** (`BATCH_SIZE = 6`). Mini-batching prevents context window saturation, keeps generation latency under ~1.5 seconds per batch on Apple Silicon, and protects memory limits on consumer hardware.
+Transactions are chunked into batches of **6 rows** (`BATCH_SIZE = 6`). Mini-batching prevents context window saturation, keeps generation latency under ~1.5 seconds per batch on Apple Silicon, and protects memory limits on consumer hardware.
 
 ---
 
@@ -186,7 +186,7 @@ except Exception as e:
 ## 6. Cryptographic Deduplication & Data Integrity
 
 ### Mathematical Verification Engine
-Located in `backend/parser.py`, the verification engine implements a row-by-row running balance invariant check:
+Located in `backend/parser/` (`pdf_parser.py` and `excel_parser.py`), the verification engine implements a row-by-row running balance invariant check:
 $$\text{Previous Balance} + \text{Credit} - \text{Debit} == \text{Current Balance}$$
 $$\text{Opening Balance} + \sum \text{Credits} - \sum \text{Debits} == \text{Closing Balance}$$
 
@@ -202,7 +202,19 @@ $$\text{Fingerprint} = \text{SHA256}(\text{date} + \text{amount} + \text{normali
 
 ## 7. Performance & Resource Benchmarks
 
-Tested on an Apple M-Series machine (8-Core CPU, 16GB Unified RAM):
+### 7.1 Multi-Tier Evaluation Harness Results (`eval/data/dev.jsonl`)
+Measured using the offline evaluation harness (`eval/run.py`) across configurations:
+
+| Configuration | Rule Coverage | LLM Coverage | Needs Review | Auto-Accept Error Rate | Macro-F1 | Throughput |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **A: Rules Only** | 79.1% | - | 20.9% | 2.94% | 88.9% | 32,450 rows/sec |
+| **B: LLM Only (No Rules)** | - | 100.0% | 0.0% | 9.30% | 49.2% | 94,328 rows/sec |
+| **C: Rules + LLM (Zero-Shot)** | 79.1% | 20.9% | 0.0% | 4.65% | 95.9% | 44,742 rows/sec |
+| **D: Rules + LLM + Few-Shot** | 79.1% | 20.9% | 0.0% | 4.65% | 95.9% | 46,435 rows/sec |
+| **E: Full System (Guardrails + Threshold)** | 72.1% | 18.6% | 9.3% | **0.0%** | 85.2% | 34,178 rows/sec |
+
+### 7.2 Hardware Latency Benchmarks
+Tested on Apple M-Series (8-Core CPU, 16GB Unified RAM) with local Ollama (`qwen2.5-coder:1.5b`):
 
 | Pipeline Stage | Implementation | Latency (p50) | Latency (p95) | Memory Footprint |
 | :--- | :--- | :--- | :--- | :--- |
@@ -210,7 +222,6 @@ Tested on an Apple M-Series machine (8-Core CPU, 16GB Unified RAM):
 | **Arithmetic Verification** | Pure Python math check | < 1 ms | < 2 ms | Negligible |
 | **Tier 1: Rules Matching** | Regex pre-filter (56 txns) | ~3 ms | ~5 ms | Negligible |
 | **Tier 2: Ollama Qwen 1.5B** | 6-row batch (JSON schema) | ~850 ms / batch | ~1,200 ms / batch | ~1.8 GB RAM |
-| **Tier 2: Ollama Qwen 3B** | 6-row batch (JSON schema) | ~1,600 ms / batch | ~2,200 ms / batch | ~2.6 GB RAM |
 | **Guardrails & SQLite Persist** | SQLAlchemy AsyncSession | ~12 ms | ~20 ms | ~15 MB |
 
 ---

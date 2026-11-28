@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import config
 from .rules import seed_default_rules, apply_rules_to_transactions
 from .llm import classify_unmatched_transactions
 from .categories import seed_default_categories
@@ -9,26 +10,51 @@ from .categories import seed_default_categories
 def validate_and_guard(txn: Dict[str, Any]) -> None:
     """
     Applies deterministic sanity guardrails to prevent accounting contradictions:
-    - Income CANNOT be a debit.
-    - Expense / COGS CANNOT be a credit (might be an expense refund, but not direct cost).
     - Amount must be > 0.
+    - Income CANNOT be a debit.
+    - Asset, COGS, Taxes MUST be debits (cannot be credit).
+    - Expense CANNOT be a credit.
+    - Capital requires a configured owner name match; if unset or unmatched, demote to needs_review.
+    - Asset below CAPITALIZATION_THRESHOLD is demoted to needs_review (policy chosen for audit safety).
+    - When demoting, set tier="validator", keep original prediction in reason, set confidence=0.0.
     """
     direction = txn.get("direction", "debit")
     element = txn.get("element", "needs_review")
+    orig_tier = txn.get("tier", "ingestion")
     amount = txn.get("amount", 0.0)
+    desc_norm = (txn.get("description_norm") or txn.get("description_raw") or "").lower()
+
+    def demote(msg: str):
+        txn["element"] = "needs_review"
+        txn["tier"] = "validator"
+        txn["confidence"] = 0.0
+        txn["reason"] = f"Guardrail: {msg} (Original prediction: {element} via {orig_tier})"
 
     if amount <= 0:
-        txn["element"] = "needs_review"
-        txn["reason"] = "Sanity check failed: Transaction amount is zero or negative."
+        demote("Transaction amount is zero or negative")
         return
 
     elem_lower = str(element).lower().replace(" ", "_")
+
+    # 1. Direction guardrails
     if elem_lower == "income" and direction == "debit":
-        txn["element"] = "needs_review"
-        txn["reason"] = "Guardrail: Income cannot be a debit (money out). Demoted to Needs Review."
-    elif elem_lower in ["expense", "cogs"] and direction == "credit":
-        txn["element"] = "needs_review"
-        txn["reason"] = f"Guardrail: {element} cannot be a credit (money in) — possible refund. Demoted to Needs Review."
+        demote("Income cannot be a debit (money out)")
+        return
+    elif elem_lower in ["expense", "cogs", "asset", "taxes"] and direction == "credit":
+        demote(f"{element.capitalize()} cannot be a credit (money in)")
+        return
+
+    # 2. Capitalization threshold for assets (P2.8)
+    if elem_lower == "asset" and amount < config.CAPITALIZATION_THRESHOLD:
+        demote(f"Asset purchase amount ₦{amount:,.2f} is below capitalization threshold (₦{config.CAPITALIZATION_THRESHOLD:,.2f})")
+        return
+
+    # 3. Capital owner name verification (P2.9)
+    if elem_lower == "capital":
+        owner_names = getattr(config, "OWNER_NAMES", [])
+        if not owner_names or not any(name in desc_norm for name in owner_names):
+            demote("Capital entry requires a configured owner name match")
+            return
 
 
 async def run_classification_pipeline(

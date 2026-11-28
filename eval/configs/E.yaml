@@ -1,0 +1,8 @@
+id: E
+name: Full system (Rules + LLM + Few-shot + Validators + Threshold)
+use_rules: true
+use_llm: true
+few_shot: true
+validators: true
+confidence_threshold: 0.75
+capitalization_threshold: 500000.0

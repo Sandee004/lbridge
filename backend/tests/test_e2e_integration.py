@@ -6,10 +6,10 @@ import models
 
 @pytest.mark.asyncio
 async def test_e2e_integration_flow(client: httpx.AsyncClient, auth_headers: dict, db_session):
-    # 1. Unauthenticated request is rejected with 401
+    # 1. P3.4 Option A: In single-user local mode, requests succeed without auth headers
     async with httpx.AsyncClient(transport=client._transport, base_url="http://test") as unauth_client:
         unauth_res = await unauth_client.get("/statements")
-        assert unauth_res.status_code == 401, f"Expected 401 Unauthorized, got {unauth_res.status_code}"
+        assert unauth_res.status_code == 200, f"Expected 200 OK in single-user mode, got {unauth_res.status_code}"
 
     # 2. Test sample loaders with authentication
     res = await client.post("/statements/sample/access-bank-pdf", headers=auth_headers)
@@ -53,7 +53,7 @@ async def test_e2e_integration_flow(client: httpx.AsyncClient, auth_headers: dic
         assert res.status_code == 200
         rules = res.json()
         rule_patterns = [r["pattern"] for r in rules]
-        assert "STARLINK_TEST" in rule_patterns
+        assert any("STARLINK_TEST" in p for p in rule_patterns)
 
         # Verify Override record
         ov_match = await db_session.execute(

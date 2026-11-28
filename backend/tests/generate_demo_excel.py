@@ -62,9 +62,9 @@ def generate_demo_excel(filename="demo_statement.xlsx"):
 
     txns_data = [
         ("01/10/2026", "01/10/2026", "R-1523348849/NYSC STATE:OVERHEADPAYMENT:CBN", "REMITA-9015233", Decimal("0.00"), Decimal("65000.00")),
-        ("01/10/2026", "01/10/2026", "MOBILE TRF TO PPL /SANDRA TOMSIN OYAREKHUA", "TRF-0010492", Decimal("25000.00"), Decimal("0.00")),
-        ("01/10/2026", "01/10/2026", "COMMISSION MOBILE TRF TO PPL /SANDRA TOMSIN", "COMM-0010492", Decimal("25.00"), Decimal("0.00")),
-        ("01/10/2026", "01/10/2026", "VAT MOBILE TRF TO PPL /SANDRA TOMSIN", "VAT-0010492", Decimal("1.88"), Decimal("0.00")),
+        ("01/10/2026", "01/10/2026", "MOBILE TRF TO PPL /AMAKA JANE OKORO", "TRF-0010492", Decimal("25000.00"), Decimal("0.00")),
+        ("01/10/2026", "01/10/2026", "COMMISSION MOBILE TRF TO PPL /AMAKA JANE OKORO", "COMM-0010492", Decimal("25.00"), Decimal("0.00")),
+        ("01/10/2026", "01/10/2026", "VAT MOBILE TRF TO PPL /AMAKA JANE OKORO", "VAT-0010492", Decimal("1.88"), Decimal("0.00")),
         ("02/10/2026", "02/10/2026", "SPECTRANET 4G LTE BROADBAND RENEWAL 50GB", "SPEC-9940129", Decimal("18500.00"), Decimal("0.00")),
         ("02/10/2026", "02/10/2026", "TRF/FRM/0029103994/REF88219", "TRF-88219", Decimal("0.00"), Decimal("50000.00")),
         ("03/10/2026", "03/10/2026", "IKEDC PREPAID TOKEN 042918201948 - IKEJA ELECTRIC", "IKEDC-109384", Decimal("25000.00"), Decimal("0.00")),
