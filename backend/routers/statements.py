@@ -33,7 +33,7 @@ async def process_statement_bytes(content: bytes, filename: str, db: AsyncSessio
         select(Statement).options(selectinload(Statement.transactions)).where(Statement.source_hash == source_hash)
     )
     existing_file_stmt = stmt_match.scalars().first()
-    if existing_file_stmt and len(existing_file_stmt.transactions) > 0:
+    if existing_file_stmt and existing_file_stmt.math_ok and len(existing_file_stmt.transactions) > 0:
         return UploadSummaryResponse(
             statement_id=existing_file_stmt.id,
             filename=existing_file_stmt.filename,
@@ -53,6 +53,10 @@ async def process_statement_bytes(content: bytes, filename: str, db: AsyncSessio
             needs_review_count=sum(1 for t in existing_file_stmt.transactions if t.element == "needs_review"),
             message=f"Statement '{existing_file_stmt.filename}' is already active with {len(existing_file_stmt.transactions)} transactions.",
         )
+    elif existing_file_stmt:
+        # Previous upload failed math verification or was corrupted; delete it to re-parse cleanly with latest parser
+        await db.delete(existing_file_stmt)
+        await db.flush()
 
     try:
         if ext == ".pdf":

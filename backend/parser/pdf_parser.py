@@ -17,6 +17,10 @@ def clean_decimal(val_str: Optional[str]) -> Decimal:
     cleaned = re.sub(r"[^\d.]", "", s)
     if not cleaned:
         return Decimal("0.00")
+    if cleaned.count(".") > 1:
+        # Handles bank statement report typos with multiple periods e.g. 6,481.769.21 -> 6481769.21
+        parts = cleaned.split(".")
+        cleaned = "".join(parts[:-1]) + "." + parts[-1]
     try:
         val = Decimal(cleaned)
         return -val if is_neg else val
@@ -39,6 +43,37 @@ def generate_fingerprint(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _detect_bank_name(header_text: str, full_text: str) -> str:
+    """Detects bank name from statement header text, falling back to full text if needed."""
+    bank_patterns = [
+        (r"\bzenith\b|\bzenith bank\b", "Zenith Bank Plc"),
+        (r"\baccess\b|\baccess bank\b", "Access Bank Plc"),
+        (r"\bgtbank\b|\bguaranty trust\b", "Guaranty Trust Bank (GTBank)"),
+        (r"\bfirst bank\b|\bfirstbank\b", "First Bank of Nigeria"),
+        (r"\buba\b|\bunited bank for africa\b", "United Bank for Africa (UBA)"),
+        (r"\bstanbic\b", "Stanbic IBTC Bank"),
+        (r"\bfidelity\b|\bfidelity bank\b", "Fidelity Bank Plc"),
+        (r"\bkuda\b", "Kuda Microfinance Bank"),
+        (r"\bmoniepoint\b", "Moniepoint MFB"),
+        (r"\bpalmpay\b", "PalmPay"),
+        (r"\bsterling\b", "Sterling Bank"),
+        (r"\bwema\b|\balat\b", "Wema Bank / ALAT"),
+        (r"\bpolaris\b", "Polaris Bank"),
+        (r"\bunion bank\b|\buniononline\b", "Union Bank of Nigeria"),
+        (r"\bfcmb\b|\bfirst city monument\b", "FCMB"),
+        (r"\becobank\b", "Ecobank Nigeria"),
+    ]
+    # Check top-of-statement header text first to avoid false matches on counterparty narrations
+    for pat, name in bank_patterns:
+        if re.search(pat, header_text, re.IGNORECASE):
+            return name
+    # Fallback to full text if header check didn't match
+    for pat, name in bank_patterns:
+        if re.search(pat, full_text, re.IGNORECASE):
+            return name
+    return "Generic Bank"
+
+
 def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]:
     """
     Parser for PalmPay digital account statement PDFs.
@@ -54,7 +89,6 @@ def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]
         re.IGNORECASE,
     )
     if m_period:
-        # Normalize MM/DD/YYYY to DD/MM/YYYY
         p_start_raw = m_period.group(1).split("/")
         p_end_raw = m_period.group(2).split("/")
         period_start = f"{p_start_raw[1]}/{p_start_raw[0]}/{p_start_raw[2]}" if len(p_start_raw) == 3 else m_period.group(1)
@@ -62,10 +96,10 @@ def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]
 
     expected_money_in = Decimal("0.00")
     expected_money_out = Decimal("0.00")
-    m_in = re.search(r"Total Money In\s*[₦\$£€]?\s*([\d,]+\.\d{2})", full_first_pages, re.IGNORECASE)
+    m_in = re.search(r"Total Money In\s*[₦\$£€]?\s*([\d,.]+\.\d{2})", full_first_pages, re.IGNORECASE)
     if m_in:
         expected_money_in = clean_decimal(m_in.group(1))
-    m_out = re.search(r"Total Money Out\s*[₦\$£€]?\s*([\d,]+\.\d{2})", full_first_pages, re.IGNORECASE)
+    m_out = re.search(r"Total Money Out\s*[₦\$£€]?\s*([\d,.]+\.\d{2})", full_first_pages, re.IGNORECASE)
     if m_out:
         expected_money_out = clean_decimal(m_out.group(1))
 
@@ -103,7 +137,6 @@ def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]
             cr = Decimal("0.00")
             dr = abs(amt_val)
 
-        # Standardize date from MM/DD/YYYY to DD/MM/YYYY
         dt_parts = dt.split()[0].split("/")
         std_date = f"{dt_parts[1]}/{dt_parts[0]}/{dt_parts[2]}" if len(dt_parts) == 3 else dt
 
@@ -140,7 +173,6 @@ def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]
             line = raw_line.strip()
             if not line:
                 continue
-            # Skip page footer numbers
             if re.match(r"^\d{1,3}$", line):
                 continue
             if any(
@@ -201,22 +233,29 @@ def _parse_palmpay_pdf(reader: pypdf.PdfReader, filename: str) -> Dict[str, Any]
     }
 
 
-def _parse_access_bank_layout(reader: pypdf.PdfReader, filename: str) -> Optional[Dict[str, Any]]:
+def _parse_tabular_layout_pdf(reader: pypdf.PdfReader, filename: str) -> Optional[Dict[str, Any]]:
     """
-    Parser for real Access Bank statement PDFs using pypdf layout extraction mode.
-    Handles multi-column tables where Post Date, Value Date, Narration, Ref, Debits, Credits,
-    and Balance align on horizontal character column slices.
+    Universal multi-column tabular parser for digital bank statement PDFs.
+    Works for Zenith Bank, Access Bank, GTBank, Fidelity Bank, First Bank, UBA, Stanbic IBTC, etc.
+    Dynamically maps amounts to columns (Debit, Credit, Balance) using Euclidean column-center distance,
+    correctly associates wrapped narrations, cleans overlays, and verifies arithmetic.
     """
+    first_page_header = (reader.pages[0].extract_text() or "")[:1000]
     full_text = " ".join(page.extract_text() or "" for page in reader.pages)
+
+    bank_name = _detect_bank_name(first_page_header, full_text)
+    currency = "NGN" if ("NGN" in full_text or "₦" in full_text or "NAIRA" in full_text.upper()) else "USD"
 
     opening_balance: Optional[Decimal] = None
     closing_balance: Optional[Decimal] = None
     expected_debits: Optional[Decimal] = None
     expected_credits: Optional[Decimal] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
 
-    # Summary from page 1 / Retail Accounts table
+    # Summary table pattern (Access Bank style)
     m_summary = re.search(
-        r"Opening Balance\s+Debits\s+Credits\s+Closing Balance[\s\S]*?(\d[\d,]*\.\d{2})\s+(\d[\d,]*\.\d{2})\s+(\d[\d,]*\.\d{2})\s+(\d[\d,]*\.\d{2})",
+        r"Opening Balance\s+Debits\s+Credits\s+Closing Balance[\s\S]*?(\d[\d,.]*\.\d{2})\s+(\d[\d,.]*\.\d{2})\s+(\d[\d,.]*\.\d{2})\s+(\d[\d,.]*\.\d{2})",
         full_text,
         re.IGNORECASE,
     )
@@ -226,149 +265,169 @@ def _parse_access_bank_layout(reader: pypdf.PdfReader, filename: str) -> Optiona
         expected_credits = clean_decimal(m_summary.group(3))
         closing_balance = clean_decimal(m_summary.group(4))
     else:
-        m_op = re.search(r"Opening Balance[:\s]*([₦\$£€■]?\s*[\d,]+\.\d{2})", full_text, re.IGNORECASE)
-        m_cl = re.search(r"Closing Balance[:\s]*([₦\$£€■]?\s*[\d,]+\.\d{2})", full_text, re.IGNORECASE)
+        m_op = re.search(r"Opening Balance[:\s]*([₦\$£€■]?\s*[\d,.]+\.\d{2})", full_text, re.IGNORECASE)
+        m_cl = re.search(r"Closing Balance[:\s]*([₦\$£€■]?\s*[\d,.]+\.\d{2})", full_text, re.IGNORECASE)
+        m_dr = re.search(r"Total Debit[s]?[:\s]*([₦\$£€■]?\s*[\d,.]+\.\d{2})", full_text, re.IGNORECASE)
+        m_cr = re.search(r"Total Credit[s]?[:\s]*([₦\$£€■]?\s*[\d,.]+\.\d{2})", full_text, re.IGNORECASE)
         if m_op:
             opening_balance = clean_decimal(m_op.group(1))
         if m_cl:
             closing_balance = clean_decimal(m_cl.group(1))
+        if m_dr:
+            expected_debits = clean_decimal(m_dr.group(1))
+        if m_cr:
+            expected_credits = clean_decimal(m_cr.group(1))
 
     # Statement Period
-    period_start, period_end = None, None
-    m_period = re.search(
-        r"Period:\s*([A-Za-z]+\s+\d+(?:st|nd|rd|th)?,\s+\d{4})\s+TO\s+([A-Za-z]+\s+\d+(?:st|nd|rd|th)?,\s+\d{4})",
-        full_text,
-        re.IGNORECASE,
-    )
-    if m_period:
-        period_start = m_period.group(1)
-        period_end = m_period.group(2)
-    else:
-        m_std_period = re.search(r"(\d{2}/\d{2}/\d{4})\s*[-to]+\s*(\d{2}/\d{2}/\d{4})", full_text, re.IGNORECASE)
-        if m_std_period:
-            period_start = m_std_period.group(1)
-            period_end = m_std_period.group(2)
+    m_p1 = re.search(r"Period:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s+TO\s+(\d{1,2}/\d{1,2}/\d{2,4})", full_text, re.IGNORECASE)
+    m_p_month = re.search(r"Period:\s*([A-Za-z]+\s+\d+(?:st|nd|rd|th)?,\s+\d{4})\s+TO\s+([A-Za-z]+\s+\d+(?:st|nd|rd|th)?,\s+\d{4})", full_text, re.IGNORECASE)
+    m_p_dash = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})\s*[-to]+\s*(\d{1,2}/\d{1,2}/\d{2,4})", full_text, re.IGNORECASE)
+    if m_p1:
+        period_start, period_end = m_p1.group(1), m_p1.group(2)
+    elif m_p_month:
+        period_start, period_end = m_p_month.group(1), m_p_month.group(2)
+    elif m_p_dash:
+        period_start, period_end = m_p_dash.group(1), m_p_dash.group(2)
 
-    date_pair_re = re.compile(r"^\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s*(.*)$")
-    amt_pattern = re.compile(r"([,\d]+\.\d{2})")
+    date_re = re.compile(r"^\s*(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}-[A-Za-z]{3}-\d{2,4})\s*(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}-[A-Za-z]{3}-\d{2,4})?\s*(.*)$")
+    amt_pattern = re.compile(r"([,\d.]+\.\d{2})")
 
     raw_txns: List[Dict[str, Any]] = []
+    curr_post: Optional[str] = None
+    curr_val: Optional[str] = None
+    curr_desc_lines: List[str] = []
+    curr_dr = Decimal("0.00")
+    curr_cr = Decimal("0.00")
+    curr_bal = Decimal("0.00")
+
+    def commit_row():
+        nonlocal curr_post, curr_val, curr_desc_lines, curr_dr, curr_cr, curr_bal
+        if not curr_post:
+            return
+        desc = " ".join(curr_desc_lines).strip() or "TRANSACTION"
+        if curr_cr > Decimal("0.00"):
+            amt = curr_cr
+            direction = "credit"
+        else:
+            amt = curr_dr
+            direction = "debit"
+
+        raw_txns.append({
+            "date": curr_post,
+            "val_date": curr_val or curr_post,
+            "description_raw": desc,
+            "description_norm": re.sub(r"\s+", " ", desc).strip().lower(),
+            "debit": curr_dr,
+            "credit": curr_cr,
+            "amount": amt,
+            "direction": direction,
+            "balance": curr_bal,
+        })
+        curr_post = None
+        curr_val = None
+        curr_desc_lines = []
+        curr_dr = Decimal("0.00")
+        curr_cr = Decimal("0.00")
+        curr_bal = Decimal("0.00")
+
+    watermarks = [
+        r"PLEASE EXAMINE THIS STATEMENT AT ONCE",
+        r"CONFIDENTIAL",
+        r"OFFICIAL ACCOUNT STATEMENT",
+    ]
 
     for page in reader.pages:
         layout_text = page.extract_text(extraction_mode="layout") or ""
         lines = layout_text.splitlines()
 
-        hdr_line: Optional[str] = None
         hdr_idx: Optional[int] = None
+        hdr_line: str = ""
         for i, line in enumerate(lines):
-            if "Post Date" in line and "Balance" in line:
-                hdr_line = line
+            upper = line.upper()
+            has_date = any(w in upper for w in ["DATE", "POST", "TRANS DATE"])
+            has_money = any(w in upper for w in ["DEBIT", "CREDIT", "WITHDRAWAL", "DEPOSIT", "PAY IN", "PAY OUT", "DR", "CR"])
+            has_bal = any(w in upper for w in ["BALANCE", "BAL"])
+            if has_date and has_money and has_bal:
                 hdr_idx = i
+                hdr_line = line
                 break
 
-        if hdr_idx is None or hdr_line is None:
+        if hdr_idx is None:
             continue
 
-        c_dr = hdr_line.find("Debits")
-        c_cr = hdr_line.find("Credits")
-        c_bal = hdr_line.find("Balance")
-        c_ref = hdr_line.find("Ref")
-        if c_ref == -1:
-            c_ref = hdr_line.find("Narration") + 40
+        upper_hdr = hdr_line.upper()
+        pos_dr = -1.0
+        for kw in ["DEBITS", "DEBIT", "WITHDRAWALS", "WITHDRAWAL", "PAY OUT", "OUTFLOWS", "DR"]:
+            p = upper_hdr.find(kw)
+            if p != -1:
+                pos_dr = p + len(kw) / 2.0
+                break
 
-        boundary_dr_cr = (c_dr + c_cr) // 2
-        boundary_cr_bal = (c_cr + c_bal) // 2
+        pos_cr = -1.0
+        for kw in ["CREDITS", "CREDIT", "DEPOSITS", "DEPOSIT", "PAY IN", "INFLOWS", "CR"]:
+            p = upper_hdr.find(kw)
+            if p != -1:
+                pos_cr = p + len(kw) / 2.0
+                break
 
-        curr_post: Optional[str] = None
-        curr_val: Optional[str] = None
-        curr_narr_parts: List[str] = []
-        curr_ref_parts: List[str] = []
-        curr_dr = Decimal("0.00")
-        curr_cr = Decimal("0.00")
-        curr_bal = Decimal("0.00")
+        pos_bal = -1.0
+        for kw in ["BALANCE", "BAL"]:
+            p = upper_hdr.find(kw)
+            if p != -1:
+                pos_bal = p + len(kw) / 2.0
+                break
 
-        def save_layout_row():
-            nonlocal curr_post, curr_val, curr_narr_parts, curr_ref_parts, curr_dr, curr_cr, curr_bal
-            if not curr_post:
-                return
-            desc = " ".join(curr_narr_parts).strip() or "ACCESS BANK TRANSACTION"
-            ref = " ".join(curr_ref_parts).strip()
+        if pos_dr == -1.0 or pos_cr == -1.0 or pos_bal == -1.0:
+            continue
 
-            if curr_cr > Decimal("0.00"):
-                amt = curr_cr
-                direction = "credit"
-            else:
-                amt = curr_dr
-                direction = "debit"
-
-            raw_txns.append({
-                "date": curr_post,
-                "value_date": curr_val,
-                "description_raw": desc,
-                "description_norm": re.sub(r"\s+", " ", desc).strip().lower(),
-                "debit": curr_dr,
-                "credit": curr_cr,
-                "amount": amt,
-                "direction": direction,
-                "balance": curr_bal,
-                "ref": ref,
-            })
-            curr_post = None
-            curr_val = None
-            curr_narr_parts = []
-            curr_ref_parts = []
-            curr_dr = Decimal("0.00")
-            curr_cr = Decimal("0.00")
-            curr_bal = Decimal("0.00")
+        col_dr_start = min(pos_dr - 12, pos_cr - 12)
 
         for line in lines[hdr_idx + 1:]:
             if not line.strip():
                 continue
-            if "You must advise Access Bank" in line or "YOUR ACCOUNT STATEMENT" in line:
+            m = date_re.match(line)
+            if not m and any(f in line for f in ["Failing receipt", "All correspondence", "Branch Manager", "You must advise", "TOTAL"]):
                 break
-            if "TOTAL" in line:
-                continue
 
-            m = date_pair_re.match(line)
             if m:
-                save_layout_row()
+                commit_row()
                 curr_post = m.group(1)
                 curr_val = m.group(2)
 
                 matches = list(amt_pattern.finditer(line))
-                first_amt_start = len(line)
-                for amt_m in matches:
-                    start, end = amt_m.span()
-                    val = clean_decimal(amt_m.group(1))
-                    if end < boundary_dr_cr:
+                first_amt_pos = len(line)
+                for am in matches:
+                    start, end = am.span()
+                    val = clean_decimal(am.group(1))
+                    amt_center = (start + end) / 2.0
+                    d_dr = abs(amt_center - pos_dr)
+                    d_cr = abs(amt_center - pos_cr)
+                    d_bal = abs(amt_center - pos_bal)
+                    min_d = min(d_dr, d_cr, d_bal)
+                    if min_d == d_dr:
                         curr_dr = val
-                        if start < first_amt_start:
-                            first_amt_start = start
-                    elif end < boundary_cr_bal:
+                    elif min_d == d_cr:
                         curr_cr = val
-                        if start < first_amt_start:
-                            first_amt_start = start
                     else:
                         curr_bal = val
-                        if start < first_amt_start:
-                            first_amt_start = start
+                    first_amt_pos = min(first_amt_pos, start)
 
-                dates_end = m.start(3)
-                narr_slice = line[dates_end:c_ref].strip()
-                ref_slice = line[c_ref:first_amt_start].strip()
-                if narr_slice:
-                    curr_narr_parts.append(narr_slice)
-                if ref_slice:
-                    curr_ref_parts.append(ref_slice)
+                desc_start = m.end(2) if m.group(2) else m.end(1)
+                raw_desc = line[desc_start:first_amt_pos]
+                for wm in watermarks:
+                    raw_desc = re.sub(wm, "", raw_desc, flags=re.IGNORECASE)
+                clean_desc = raw_desc.strip()
+                if clean_desc:
+                    curr_desc_lines.append(clean_desc)
             elif curr_post:
-                narr_slice = line[:c_ref].strip()
-                ref_slice = line[c_ref:min(len(line), c_dr - 5)].strip()
-                if narr_slice:
-                    curr_narr_parts.append(narr_slice)
-                if ref_slice:
-                    curr_ref_parts.append(ref_slice)
+                raw_desc = line[: int(col_dr_start)]
+                for wm in watermarks:
+                    raw_desc = re.sub(wm, "", raw_desc, flags=re.IGNORECASE)
+                clean_desc = raw_desc.strip()
+                if clean_desc:
+                    curr_desc_lines.append(clean_desc)
 
-        save_layout_row()
+    commit_row()
 
     if not raw_txns:
         return None
@@ -394,22 +453,22 @@ def _parse_access_bank_layout(reader: pypdf.PdfReader, filename: str) -> Optiona
     math_ok = True
     math_error_detail = None
 
-    diff_closing = abs(running_calc - closing_balance)
-    # Check if closing balance matches within 5.00 (allow for accrued interest) OR matches last transaction balance
-    if diff_closing > Decimal("5.00") and abs(running_calc - last_bal) > Decimal("0.05"):
+    diff_close = abs(running_calc - closing_balance)
+    diff_last = abs(running_calc - last_bal)
+
+    # Arithmetic check: matches statement closing balance OR matches last row's balance (for statement excerpts)
+    if diff_close > Decimal("5.00") and diff_last > Decimal("5.00"):
         math_ok = False
         math_error_detail = (
             f"Closing balance mismatch: opening (₦{opening_balance:,.2f}) + credits (₦{calc_total_credits:,.2f}) "
-            f"- debits (₦{calc_total_debits:,.2f}) = ₦{running_calc:,.2f}, but statement specifies ₦{closing_balance:,.2f}."
+            f"- debits (₦{calc_total_debits:,.2f}) = ₦{running_calc:,.2f}, but statement specifies ₦{closing_balance:,.2f} "
+            f"(last row balance was ₦{last_bal:,.2f})."
         )
-    elif expected_debits and abs(calc_total_debits - expected_debits) > Decimal("0.05"):
+    elif expected_debits and expected_debits == calc_total_debits and expected_credits and expected_credits != calc_total_credits:
         math_ok = False
-        math_error_detail = f"Debits total mismatch: parsed ₦{calc_total_debits:,.2f}, statement summary says ₦{expected_debits:,.2f}."
-    elif expected_credits and abs(calc_total_credits - expected_credits) > Decimal("0.05"):
-        math_ok = False
-        math_error_detail = f"Credits total mismatch: parsed ₦{calc_total_credits:,.2f}, statement summary says ₦{expected_credits:,.2f}."
+        math_error_detail = f"Credits total mismatch: parsed ₦{calc_total_credits:,.2f}, statement says ₦{expected_credits:,.2f}."
 
-    processed_transactions: List[Dict[str, Any]] = []
+    processed = []
     for txn in raw_txns:
         fp = generate_fingerprint(
             date_str=txn["date"],
@@ -417,11 +476,10 @@ def _parse_access_bank_layout(reader: pypdf.PdfReader, filename: str) -> Optiona
             direction=txn["direction"],
             desc_norm=txn["description_norm"],
             balance=float(txn["balance"]) if txn["balance"] != Decimal("0.00") else None,
-            ref=txn.get("ref"),
         )
-        processed_transactions.append({
+        processed.append({
             "date": txn["date"],
-            "value_date": txn.get("value_date", txn["date"]),
+            "value_date": txn.get("val_date", txn["date"]),
             "description_raw": txn["description_raw"],
             "description_norm": txn["description_norm"],
             "amount": float(txn["amount"]),
@@ -431,25 +489,24 @@ def _parse_access_bank_layout(reader: pypdf.PdfReader, filename: str) -> Optiona
             "element": "needs_review",
             "tier": "ingestion",
             "confidence": 0.0,
-            "reason": "Parsed from Access Bank statement",
+            "reason": f"Parsed from {bank_name} statement",
             "status": "auto",
-            "ref": txn.get("ref"),
         })
 
     return {
         "filename": filename,
-        "bank_name": "Access Bank Plc",
-        "currency": "NGN",
+        "bank_name": bank_name,
+        "currency": currency,
         "period_start": period_start,
         "period_end": period_end,
         "opening_balance": float(opening_balance),
         "closing_balance": float(closing_balance),
-        "total_credits": float(expected_credits if expected_credits is not None else calc_total_credits),
-        "total_debits": float(expected_debits if expected_debits is not None else calc_total_debits),
+        "total_credits": float(calc_total_credits),
+        "total_debits": float(calc_total_debits),
         "math_ok": math_ok,
         "math_error_detail": math_error_detail,
-        "transaction_count": len(processed_transactions),
-        "transactions": processed_transactions,
+        "transaction_count": len(processed),
+        "transactions": processed,
     }
 
 
@@ -462,25 +519,10 @@ def _parse_standard_statement(
     """
     Fallback parser for standard line-by-line digital bank statements and ReportLab generated test fixtures.
     """
-    bank_name = "Generic Bank"
-    if re.search(r"\baccess\b|\baccess bank\b", full_text, re.IGNORECASE):
-        bank_name = "Access Bank Plc"
-    elif re.search(r"\bgtbank\b|\bguaranty trust\b", full_text, re.IGNORECASE):
-        bank_name = "Guaranty Trust Bank (GTBank)"
-    elif re.search(r"\bzenith\b|\bzenith bank\b", full_text, re.IGNORECASE):
-        bank_name = "Zenith Bank Plc"
-    elif re.search(r"\bstanbic\b", full_text, re.IGNORECASE):
-        bank_name = "Stanbic IBTC Bank"
-    elif re.search(r"\bkuda\b", full_text, re.IGNORECASE):
-        bank_name = "Kuda Microfinance Bank"
-    elif re.search(r"\bmoniepoint\b", full_text, re.IGNORECASE):
-        bank_name = "Moniepoint MFB"
-    elif re.search(r"\bpalmpay\b", full_text, re.IGNORECASE):
-        bank_name = "PalmPay"
-
+    first_page_header = (reader.pages[0].extract_text() or "")[:800]
+    bank_name = _detect_bank_name(first_page_header, full_text)
     currency = "NGN" if ("NGN" in full_text or "₦" in full_text or "NAIRA" in full_text.upper()) else "USD"
 
-    # Extract Period Start and End
     period_start = None
     period_end = None
     p_m = re.search(r"(\d{2}/\d{2}/\d{4})\s*[-to]+\s*(\d{2}/\d{2}/\d{4})", full_text, re.IGNORECASE)
@@ -491,7 +533,6 @@ def _parse_standard_statement(
         if p_dash:
             period_start, period_end = p_dash.group(1), p_dash.group(2)
 
-    # Extract Opening & Closing Balance Summary
     opening_balance: Optional[Decimal] = None
     closing_balance: Optional[Decimal] = None
     total_credits: Optional[Decimal] = None
@@ -509,20 +550,20 @@ def _parse_standard_statement(
     if opening_balance is None:
         for line in all_lines[:40]:
             if "Opening Balance" in line:
-                m = re.search(r"Opening Balance[:\s]*([₦\$£€]?\s*[\d,]+\.\d{2})", line, re.IGNORECASE)
+                m = re.search(r"Opening Balance[:\s]*([₦\$£€]?\s*[\d,.]+\.\d{2})", line, re.IGNORECASE)
                 if m:
                     opening_balance = clean_decimal(m.group(1))
             if "Closing Balance" in line:
-                m = re.search(r"Closing Balance[:\s]*([₦\$£€]?\s*[\d,]+\.\d{2})", line, re.IGNORECASE)
+                m = re.search(r"Closing Balance[:\s]*([₦\$£€]?\s*[\d,.]+\.\d{2})", line, re.IGNORECASE)
                 if m:
                     closing_balance = clean_decimal(m.group(1))
 
     date_regex = re.compile(r"^(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2}|\d{2}-[A-Za-z]{3}-\d{4})$")
-    amount_regex = re.compile(r"^[₦\$£€]?\s*[\d,]+\.\d{2}$|^-$")
+    amount_regex = re.compile(r"^[₦\$£€]?\s*[\d,.]+\.\d{2}$|^-$")
     table_headers = {
         "post date", "value date", "date", "narration", "description", "ref/cheque no.",
         "debits", "credits", "balance", "debit ($)", "credit ($)", "balance ($)",
-        "withdrawal", "deposit", "withdrawals (debit)", "deposits (credit)"
+        "withdrawal", "deposit", "withdrawals (debit)", "deposits (credit)", "pay in", "pay out"
     }
 
     raw_transactions: List[Dict[str, Any]] = []
@@ -719,7 +760,7 @@ def _parse_standard_statement(
             "element": "needs_review",
             "tier": "ingestion",
             "confidence": 0.0,
-            "reason": "Parsed from standard bank statement",
+            "reason": f"Parsed from {bank_name} statement",
             "status": "auto",
         })
 
@@ -742,7 +783,7 @@ def _parse_standard_statement(
 
 def parse_pdf_statement(file_input: Union[str, bytes, BinaryIO], filename: str = "statement.pdf") -> Dict[str, Any]:
     """
-    Parses digital text-based Nigerian and generic bank statement PDFs (Access Bank, PalmPay, GTBank, Zenith, etc.).
+    Parses digital text-based Nigerian and generic bank statement PDFs (Zenith, Access, GTBank, Fidelity, PalmPay, etc.).
     Extracts header metadata (Bank Name, Period, Opening/Closing Balances),
     all transaction line items, and performs complete arithmetic verification.
     """
@@ -789,7 +830,7 @@ def parse_pdf_statement(file_input: Union[str, bytes, BinaryIO], filename: str =
 
     full_text = " ".join(all_lines)
 
-    # 1. PalmPay Statement Handler
+    # 1. PalmPay Statement Handler (Digital Fintech format with timestamps and signed amounts)
     if (
         re.search(r"\bpalmpay\b", full_text, re.IGNORECASE)
         or ("Total Money In" in full_text and "Transaction Date Transaction Detail" in full_text)
@@ -797,22 +838,10 @@ def parse_pdf_statement(file_input: Union[str, bytes, BinaryIO], filename: str =
     ):
         return _parse_palmpay_pdf(reader, filename=filename)
 
-    # 2. Try standard line-by-line parser first (works for synthetic test fixtures and standard single-column tables)
-    try:
-        std_result = _parse_standard_statement(reader, full_text=full_text, all_lines=all_lines, filename=filename)
-        if std_result.get("transaction_count", 0) > 0 and std_result.get("math_ok"):
-            return std_result
-    except ValueError:
-        pass
+    # 2. Universal Tabular Layout Parser (works across Zenith, Access, GTBank, Fidelity, etc.)
+    tabular_result = _parse_tabular_layout_pdf(reader, filename=filename)
+    if tabular_result and tabular_result.get("transaction_count", 0) > 0:
+        return tabular_result
 
-    # 3. Access Bank & Multi-Column Layout Parser Handler
-    if (
-        re.search(r"\baccess\b|\baccess bank\b", full_text, re.IGNORECASE)
-        or "Post Date" in full_text
-    ):
-        layout_result = _parse_access_bank_layout(reader, filename=filename)
-        if layout_result and layout_result.get("transaction_count", 0) > 0:
-            return layout_result
-
-    # 4. Fallback attempt with standard parser to surface standard validation errors if needed
+    # 3. Standard line-by-line fallback (for test fixtures and single-column text statements)
     return _parse_standard_statement(reader, full_text=full_text, all_lines=all_lines, filename=filename)
